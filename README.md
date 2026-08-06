@@ -1,44 +1,37 @@
 # Term Sheet Extractor — distribution channel
 
-This repository distributes signed, runtime-only releases of the Term Sheet Extractor server.
-It contains **no source code** and never will. Everything of substance lives in the
-[Releases](../../releases) of this repository; the repository tree itself holds only this file.
+This public repository distributes signed, runtime-only Term Sheet Extractor server releases. It contains no application source.
 
-Releases are published automatically by the release workflow in the private source repository.
-Do not upload assets here by hand.
+Versioned assets are published automatically by the private source repository. Do not upload or replace release assets by hand.
 
 ## For operators
 
-Installed servers poll one fixed URL, which never changes across releases:
+Installed servers poll this fixed anonymous HTTPS URL:
 
 ```text
-https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-production/production.json
+https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json
 ```
 
-No credential is required to read it. Do not place a GitHub token in updater configuration —
-these assets are public and there is nothing for a token to authorise.
+The `main` branch holds the signed `production.json` channel manifest and the release public key. Each channel promotion is an atomic commit with Git history. Application artifacts and bootstrap packages live in immutable GitHub Releases tagged `server-vX.Y.Z`.
+
+Never put a GitHub token in updater configuration. Downloads are public, and authenticity comes from the signed manifest plus the separately verified, pinned public key—not from repository access.
+
+## Initial installation
+
+Download `term-sheet-bootstrap-X.Y.Z.zip` from the intended immutable release. Before running any PowerShell, compare the key fingerprint in its `README.txt` with the value supplied out of band by the vendor:
+
+```powershell
+(Get-FileHash .\release-signing-public.pem -Algorithm SHA256).Hash.ToLowerInvariant()
+```
+
+Do not establish trust by comparing only with the copy in this repository; a separate channel is required. The bootstrap package includes read-only connectivity and end-to-end verification scripts and refuses a signed initial release older than its own version.
 
 ## Release layout
 
-| Tag | Mutability | Contents |
+| Location | Mutability | Contents |
 | --- | --- | --- |
-| `server-vX.Y.Z` | Immutable | The versioned server tarball, bootstrap zip, their SHA-256 checksums, the signed manifest, and the release signing public key |
-| `server-production` | Mutable | Only `production.json` and `release-signing-public.pem`. This is the production channel every updater polls |
+| `server-vX.Y.Z` GitHub Release | Immutable after publication | Server tarball, bootstrap zip, SHA-256 files, signed manifest, public key |
+| `main:production.json` | Atomic, history-retained branch update | Signed production channel manifest polled by installed servers |
+| `main:release-signing-public.pem` | Pinned once; workflow refuses replacement | Convenience copy only; verify its fingerprint out of band |
 
-## Verifying a release
-
-Every manifest is signed with the project's release key. The updater verifies the signature
-before applying anything, so an unsigned or tampered asset published here cannot be installed.
-
-Confirm out of band — against the fingerprint supplied by the vendor through a channel other than
-this repository — that the public key you hold is the expected one:
-
-```powershell
-openssl pkey -pubin -in release-signing-public.pem -outform DER | openssl dgst -sha256
-```
-
-Then verify a downloaded artifact against its published checksum:
-
-```powershell
-Get-FileHash .\term-sheet-server-X.Y.Z.tar.gz -Algorithm SHA256
-```
+The updater verifies the manifest signature, updater compatibility, artifact name, exact size, SHA-256, archive paths, and internal release marker before activation.
