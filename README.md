@@ -1,37 +1,184 @@
-# Term Sheet Extractor — distribution channel
+# Term Sheet server — operator guide
 
-This public repository distributes signed, runtime-only Term Sheet Extractor server releases. It contains no application source.
+This is for the person installing and running the Term Sheet server on your own Windows machine.
+It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
+assume access to the vendor's source code or internal engineering documentation — you shouldn't need
+either.
 
-Versioned assets are published automatically by the private source repository. Do not upload or replace release assets by hand.
+If anything here doesn't match what you're seeing, stop and contact the vendor rather than guessing.
 
-## For operators
+## What you're installing
 
-Installed servers poll this fixed anonymous HTTPS URL:
+A self-contained Windows server: a web service, a background worker, a reverse proxy (Caddy) that
+terminates HTTPS, and a small updater that checks for new versions on a timer and applies them
+automatically. Everything the server ever runs is cryptographically signed by the vendor; the server
+verifies that signature before installing anything, every time, including its own future updates.
 
-```text
-https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json
-```
+Your database, documents, and configuration live outside the installed application entirely, so an
+update — or a rollback from a bad one — never touches them.
 
-The `main` branch holds the signed `production.json` channel manifest and the release public key. Each channel promotion is an atomic commit with Git history. Application artifacts and bootstrap packages live in immutable GitHub Releases tagged `server-vX.Y.Z`.
+## Before you start
 
-Never put a GitHub token in updater configuration. Downloads are public, and authenticity comes from the signed manifest plus the separately verified, pinned public key—not from repository access.
+Install these first, from packages you trust:
 
-## Initial installation
+- PostgreSQL 18 (x64)
+- Node.js 22 LTS (x64) — the server release ships without its own Node runtime
+- [NSSM](https://nssm.cc/) — runs the services
+- [Caddy](https://caddyserver.com/) — terminates HTTPS
 
-Download `term-sheet-bootstrap-X.Y.Z.zip` from the intended immutable release. Before running any PowerShell, compare the key fingerprint in its `README.txt` with the value supplied out of band by the vendor:
+You'll also need: an elevated PowerShell session, a DNS hostname pointed at this machine, and two
+people available to hold escrow certificates (see [Step 4](#step-4-install)).
+
+## Step 1: Confirm you have the right key
+
+Everything below trusts one file: `release-signing-public.pem`, included in this package. Before
+using it, confirm its SHA-256 fingerprint matches the one the vendor gave you **through a separate
+channel** from wherever you got this package — a phone call, a signed email, a contract appendix.
+Never accept the fingerprint printed alongside the download itself; that's exactly what an attacker
+controlling the download would also control.
 
 ```powershell
-(Get-FileHash .\release-signing-public.pem -Algorithm SHA256).Hash.ToLowerInvariant()
+Get-FileHash .\release-signing-public.pem -Algorithm SHA256
 ```
 
-Do not establish trust by comparing only with the copy in this repository; a separate channel is required. The bootstrap package includes read-only connectivity and end-to-end verification scripts and refuses a signed initial release older than its own version.
+If it doesn't match what the vendor told you, stop. Don't run anything else in this package, and
+contact the vendor immediately.
 
-## Release layout
+## Step 2: Check the machine
 
-| Location | Mutability | Contents |
-| --- | --- | --- |
-| `server-vX.Y.Z` GitHub Release | Immutable after publication | Server tarball, bootstrap zip, SHA-256 files, signed manifest, public key |
-| `main:production.json` | Atomic, history-retained branch update | Signed production channel manifest polled by installed servers |
-| `main:release-signing-public.pem` | Pinned once; workflow refuses replacement | Convenience copy only; verify its fingerprint out of band |
+`preflight-connectivity.ps1` confirms the machine is ready before you commit to an install. It makes
+no changes, needs no administrator rights, and reports every problem it finds in one pass rather than
+stopping at the first one.
 
-The updater verifies the manifest signature, updater compatibility, artifact name, exact size, SHA-256, archive paths, and internal release marker before activation.
+```powershell
+.\preflight-connectivity.ps1 -ManifestUri <manifest-url-from-vendor> `
+  -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint <fingerprint-from-step-1> `
+  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe
+```
+
+| Check | A failure means |
+| --- | --- |
+| DNS resolution | This machine can't resolve the update server's hostname. Check DNS configuration. |
+| Outbound HTTPS to manifest host | A firewall or proxy is blocking outbound HTTPS. The server needs this reachable permanently, not just during install — it's how it gets every future update. |
+| Release public key present / fingerprint match | Either the key file is missing, or it doesn't match the fingerprint you were given. **Treat a mismatch as a possible tampering attempt, not a typo** — stop and contact the vendor. |
+| Node.js available | Node isn't installed, isn't on the expected path, is older than version 22, or isn't the x64 build. |
+| System tar.exe available | Windows' built-in `tar.exe` (System32) is missing or shadowed by another `tar` on PATH. |
+| NSSM / Caddy present | The path you gave doesn't point at a real file. |
+
+Fix everything reported before continuing — each one will surface again, less clearly, during actual
+install or first update.
+
+## Step 3: Verify the release before installing
+
+`verify-release.ps1` downloads the exact release your key would install, checks its signature,
+size, and checksum, and confirms its release marker — the same checks the installer and every future
+update apply — then deletes the download. It changes nothing on the machine.
+
+```powershell
+.\verify-release.ps1 -ManifestUri <manifest-url-from-vendor> -PublicKeyPath .\release-signing-public.pem
+```
+
+A clean run prints the version and release identifier it verified. Any failure here means don't
+proceed with install — something about the release doesn't check out, and continuing anyway would
+just fail the same check again during installation, or worse, not fail it.
+
+## Step 4: Install
+
+From an elevated PowerShell session, in this package's directory:
+
+```powershell
+.\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
+  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
+  -PublicHostname termsheets.example.com -ServiceUser 'CORP\svc-termsheet' `
+  -EscrowDirectory D:\Escrow -EscrowCertificatePath D:\Escrow\custodian-a.cer,D:\Escrow\custodian-b.cer `
+  -ManifestUri <manifest-url-from-vendor> -ReleasePublicKeyPath .\release-signing-public.pem
+```
+
+What each required flag is:
+
+| Flag | What it is |
+| --- | --- |
+| `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
+| `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Before you start](#before-you-start). |
+| `-PublicHostname` | The DNS name customers/staff will reach this server at. Caddy provisions HTTPS for it automatically. |
+| `-ServiceUser` | The low-privilege Windows account the application services run as. Not an administrator account — the bootstrap deliberately restricts what this account can touch. |
+| `-EscrowDirectory`, `-EscrowCertificatePath` | Where a sealed, encrypted backup of the document-encryption master key is written, and the public certificates of two separate people who can each decrypt it. This key is generated once and never leaves this machine except as this sealed escrow copy — losing it without an escrow copy means losing access to every stored document. Two certificates are required on purpose: no single person can recover it alone. |
+| `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
+| `-ReleasePublicKeyPath` | The key from [Step 1](#step-1-confirm-you-have-the-right-key). |
+
+It's safe to run more than once. If a release is already installed, it leaves it alone and reports
+that. It refuses to trust a different signing key on a rerun — if you need to install a new key,
+that's a separate, deliberate procedure the vendor will walk you through, not something this script
+does implicitly.
+
+Before running it, create `%ProgramData%\WinnerZone\TermSheet\config\server.env` from
+`server.env.example` (also in this package). Leave `DOCUMENT_STORE_MASTER_KEY` out of it entirely —
+the bootstrap refuses to continue if it's present; the key is generated and held by the machine
+itself (via DPAPI, or Azure Key Vault if you passed `-KeyProvider AzureKeyVault`).
+
+## What gets installed
+
+Four Windows services, all managed by NSSM, all set to restart automatically:
+
+| Service | What it does |
+| --- | --- |
+| `TermSheetWeb` | The application itself |
+| `TermSheetWorker` | Background processing (document extraction, etc.) |
+| `TermSheetProxy` | Caddy — terminates HTTPS on port 443 |
+| `TermSheetBackup` | Scheduled database/document backups |
+
+Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
+errors). If something looks wrong, this is the first place to look.
+
+## Day-to-day operation
+
+**Updates are automatic and require nothing from you.** The updater checks the manifest URL every
+15 minutes by default (configurable at install time), and applies a new signed version if one's
+available — downloading it, verifying its signature, taking a backup, running it alongside the
+current version to confirm it's healthy, and only then switching over. If a newly-installed version
+fails its own health check, the updater automatically switches back to the previous one; you don't
+have to intervene, and the change happens in seconds.
+
+To check status at any time:
+
+```powershell
+Get-Content "%ProgramData%\WinnerZone\TermSheet\updater-state.json" | ConvertFrom-Json
+```
+
+| Field | Meaning |
+| --- | --- |
+| `status` | What the updater is doing right now: `idle` (nothing to do), `checking`, `downloading`, `staging`, `snapshotting` (taking a pre-update backup), `activating`, `rolling-back`, or `failed`. |
+| `installedVersion` | The version currently serving traffic. |
+| `previousVersion` | What was running before the last successful update — the rollback target if needed. |
+| `blockedVersion` | A version the updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version again; a newer signed release is required. If this is set, contact the vendor — this generally means a release needs a fix, not that anything is wrong with your server. |
+| `activeReleaseUnhealthy` | If `true`, the currently active release failed its own health checks and an automatic rollback wasn't possible (most often because a database migration can't safely run backwards). This is the one status worth paging someone over — the server may be degraded and needs the vendor's attention, ideally restored from the backup noted in `lastSuccessfulUpdateAt`. |
+| `lastCheckedAt`, `lastSuccessfulUpdateAt`, `lastFailureAt` | Timestamps, for confirming the updater is actually running on schedule. |
+
+If you gave `-UpdateStatusWebhookUri` at install time, every status change is also posted there
+automatically — useful for wiring into existing monitoring rather than polling the file above.
+
+## If something goes wrong
+
+**A service won't start.** Check its `.err.log` under `logs\`. Confirm PostgreSQL is reachable and
+`server.env` is present and correctly restricted (only the service account and administrators should
+be able to read it — the bootstrap sets this automatically, but a later manual edit can undo it).
+
+**`preflight-connectivity.ps1` or `verify-release.ps1` starts failing after months of working fine.**
+Most likely an outbound firewall or proxy rule changed. If it's specifically the public-key
+fingerprint check that starts failing, stop and contact the vendor before doing anything else — that
+specific failure is what a compromised update channel would look like.
+
+**Disk space errors during an update.** The updater refuses to proceed unless there's room for the
+new release plus enough headroom to roll back safely. Free up space; nothing will be left half
+-installed by a refusal like this.
+
+**You need to force an update check immediately**, rather than waiting for the next scheduled run —
+ask the vendor for the exact command; it runs the same script the scheduled task does, so it's safe,
+but the flags matter and depend on your install layout.
+
+## Getting help
+
+Contact your vendor with the version from `updater-state.json`'s `installedVersion`, the relevant
+lines from the service's `.err.log`, and — if it's update-related — the full `updater-state.json`.
+Don't send `server.env` or anything from the `config\` or `secrets\` folders; the vendor should never
+need those, and they contain your credentials.
