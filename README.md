@@ -116,6 +116,21 @@ Before running it, create `%ProgramData%\WinnerZone\TermSheet\config\server.env`
 the bootstrap refuses to continue if it's present; the key is generated and held by the machine
 itself (via DPAPI, or Azure Key Vault if you passed `-KeyProvider AzureKeyVault`).
 
+Choose how provider API keys will be owned:
+
+- **Application-managed (the default):** leave `SECRET_STORE=encrypted` and leave the five provider
+  variables empty. After installation, a trusted application administrator with `data-admin` enters
+  approved keys under **Settings -> API keys**. They are encrypted in PostgreSQL under the same
+  machine-held master key; a Settings key overrides a matching environment value.
+- **IT-managed:** set `SECRET_STORE=environment` and place only approved provider credentials in the
+  matching `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, or
+  `NVIDIA_API_KEY` entry. The application can use and report those keys but cannot change or remove
+  them through Settings. Restart the web and worker services after an IT-managed key changes.
+
+Do not send `server.env` to the vendor or include a key in a ticket or screenshot. After setup,
+verify that Settings shows the intended provider as configured; it should expose only a masked
+preview.
+
 ## What gets installed
 
 Four Windows services, all managed by NSSM, all set to restart automatically:
