@@ -50,13 +50,13 @@ contact the vendor immediately.
 no changes, needs no administrator rights, and reports every problem it finds in one pass rather than
 stopping at the first one.
 
-Replace both quoted `REPLACE_WITH_...` values before running the command. Keep the quotes:
-PowerShell treats an unquoted `<placeholder>` as an operator, which causes the
-`The '<' operator is reserved for future use` parse error.
+The release manifest URL and current signing-key fingerprint are filled in below. No placeholders
+need to be replaced; keep the quoted values intact when pasting into PowerShell. Confirm the
+fingerprint still matches the value supplied through the separate channel described in Step 1.
 
 ```powershell
-$manifestUri = "REPLACE_WITH_MANIFEST_URL_FROM_VENDOR"
-$expectedFingerprint = "REPLACE_WITH_FINGERPRINT_FROM_STEP_1"
+$manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
+$expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217"
 
 .\preflight-connectivity.ps1 -ManifestUri $manifestUri `
   -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint $expectedFingerprint `
