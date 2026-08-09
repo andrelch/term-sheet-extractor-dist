@@ -29,6 +29,36 @@ Install these first, from packages you trust:
 You'll also need: an elevated PowerShell session, a DNS hostname pointed at this machine, and two
 people available to hold escrow certificates (see [Step 4](#step-4-install)).
 
+## Step 0: Download and extract the bootstrap package
+
+The repository root intentionally contains only the update channel, signing key, and this guide.
+The PowerShell scripts are in the versioned bootstrap ZIP attached to the current server release.
+Open PowerShell in the directory where you want to keep the installer and run:
+
+```powershell
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.5/term-sheet-bootstrap-0.2.5.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.5/term-sheet-bootstrap-0.2.5.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.5-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.5.zip"
+$bootstrapChecksum = "$bootstrapZip.sha256"
+
+New-Item -ItemType Directory -Path $downloadRoot -ErrorAction Stop | Out-Null
+Invoke-WebRequest -Uri $bootstrapUrl -OutFile $bootstrapZip -UseBasicParsing
+Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing
+
+$expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+$actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch." }
+
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.5"
+Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $packageDirectory
+Set-Location $packageDirectory
+Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, .\bootstrap-windows-server.ps1
+```
+
+The last command must list all three scripts. Run every remaining command from that extracted
+package directory.
+
 ## Step 1: Confirm you have the right key
 
 Everything below trusts one file: `release-signing-public.pem`, included in this package. Before
@@ -56,7 +86,7 @@ fingerprint still matches the value supplied through the separate channel descri
 
 ```powershell
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
-$expectedFingerprint = "cee09bcc4ffc546ff91977dc14df88c0b0453837bf5e26671c84649ee26fccf5"
+$expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217"
 
 .\preflight-connectivity.ps1 -ManifestUri $manifestUri `
   -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint $expectedFingerprint `
