@@ -56,7 +56,7 @@ fingerprint still matches the value supplied through the separate channel descri
 
 ```powershell
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
-$expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217"
+$expectedFingerprint = "cee09bcc4ffc546ff91977dc14df88c0b0453837bf5e26671c84649ee26fccf5"
 
 .\preflight-connectivity.ps1 -ManifestUri $manifestUri `
   -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint $expectedFingerprint `
