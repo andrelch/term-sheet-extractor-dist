@@ -50,9 +50,16 @@ contact the vendor immediately.
 no changes, needs no administrator rights, and reports every problem it finds in one pass rather than
 stopping at the first one.
 
+Replace both quoted `REPLACE_WITH_...` values before running the command. Keep the quotes:
+PowerShell treats an unquoted `<placeholder>` as an operator, which causes the
+`The '<' operator is reserved for future use` parse error.
+
 ```powershell
-.\preflight-connectivity.ps1 -ManifestUri <manifest-url-from-vendor> `
-  -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint <fingerprint-from-step-1> `
+$manifestUri = "REPLACE_WITH_MANIFEST_URL_FROM_VENDOR"
+$expectedFingerprint = "REPLACE_WITH_FINGERPRINT_FROM_STEP_1"
+
+.\preflight-connectivity.ps1 -ManifestUri $manifestUri `
+  -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint $expectedFingerprint `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe
 ```
 
@@ -75,7 +82,7 @@ size, and checksum, and confirms its release marker — the same checks the inst
 update apply — then deletes the download. It changes nothing on the machine.
 
 ```powershell
-.\verify-release.ps1 -ManifestUri <manifest-url-from-vendor> -PublicKeyPath .\release-signing-public.pem
+.\verify-release.ps1 -ManifestUri $manifestUri -PublicKeyPath .\release-signing-public.pem
 ```
 
 A clean run prints the version and release identifier it verified. Any failure here means don't
@@ -91,7 +98,7 @@ From an elevated PowerShell session, in this package's directory:
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
   -PublicHostname termsheets.example.com -ServiceUser 'CORP\svc-termsheet' `
   -EscrowDirectory D:\Escrow -EscrowCertificatePath D:\Escrow\custodian-a.cer,D:\Escrow\custodian-b.cer `
-  -ManifestUri <manifest-url-from-vendor> -ReleasePublicKeyPath .\release-signing-public.pem
+  -ManifestUri $manifestUri -ReleasePublicKeyPath .\release-signing-public.pem
 ```
 
 What each required flag is:
