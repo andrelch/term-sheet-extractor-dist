@@ -43,10 +43,10 @@ copy and can continue to Step 1. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.6/term-sheet-bootstrap-0.2.6.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.6/term-sheet-bootstrap-0.2.6.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.6-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.6.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.7/term-sheet-bootstrap-0.2.7.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.7/term-sheet-bootstrap-0.2.7.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.7-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.7.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
 New-Item -ItemType Directory -Path $downloadRoot -ErrorAction Stop | Out-Null
@@ -57,7 +57,7 @@ $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Tri
 $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch." }
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.6"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.7"
 Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $packageDirectory
 Set-Location $packageDirectory
 Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, .\bootstrap-windows-server.ps1
@@ -133,7 +133,7 @@ From an elevated PowerShell session, in this package's directory:
 ```powershell
 .\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
-  -PublicHostname termsheets.example.com -ServiceUser 'CORP\svc-termsheet' `
+  -ServiceUser 'CORP\svc-termsheet' `
   -EscrowDirectory D:\Escrow -EscrowCertificatePath D:\Escrow\custodian-a.cer,D:\Escrow\custodian-b.cer `
   -ManifestUri $manifestUri -ReleasePublicKeyPath .\release-signing-public.pem
 ```
@@ -144,7 +144,7 @@ and omit both escrow arguments by using `-AllowDeferredEscrow`:
 ```powershell
 .\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
-  -PublicHostname termsheets.example.com -ServiceUser 'CORP\svc-termsheet' `
+  -ServiceUser 'CORP\svc-termsheet' `
   -AllowDeferredEscrow `
   -ManifestUri $manifestUri -ReleasePublicKeyPath .\release-signing-public.pem
 ```
@@ -159,7 +159,7 @@ What each required flag is:
 | --- | --- |
 | `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Before you start](#before-you-start). |
-| `-PublicHostname` | The DNS name customers/staff will reach this server at. Caddy provisions HTTPS for it automatically. |
+| `-PublicHostname` | Defaults to `localhost`. Supply a configured DNS hostname when other computers must reach this server; Caddy provisions HTTPS for it automatically. |
 | `-ServiceUser` | The low-privilege Windows account the application services run as. Not an administrator account — the bootstrap deliberately restricts what this account can touch. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
 | `-AllowDeferredEscrow` | Explicitly installs without recovery packages when custodians do not yet exist. It cannot be combined with either escrow argument and must be treated as a temporary, approved data-loss risk. |
@@ -188,6 +188,9 @@ Before running it, create `%ProgramData%\WinnerZone\TermSheet\config\server.env`
 `server.env.example` (also in this package). Leave `DOCUMENT_STORE_MASTER_KEY` out of it entirely —
 the bootstrap refuses to continue if it's present; the key is generated and held by the machine
 itself (via DPAPI, or Azure Key Vault if you passed `-KeyProvider AzureKeyVault`).
+
+Windows normally hides `C:\ProgramData`, and the `WinnerZone\TermSheet` subfolders do not need to
+exist beforehand. The distribution README's `New-Item` command creates them.
 
 Choose how provider API keys will be owned:
 
