@@ -1,11 +1,11 @@
-# Term Sheet server 0.2.8.0 operator guide
+# Term Sheet server — operator guide
 
 > Verified against the current bootstrap, updater, release layout, and service installer on
 > 11 August 2026.
 
 This is for the person installing and running the Term Sheet server on your own Windows machine.
 It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
-assume access to the vendor's source code or internal engineering documentation â€” you shouldn't need
+assume access to the vendor's source code or internal engineering documentation — you shouldn't need
 either.
 
 If anything here doesn't match what you're seeing, stop and contact the vendor rather than guessing.
@@ -18,7 +18,7 @@ automatically. Everything the server ever runs is cryptographically signed by th
 verifies that signature before installing anything, every time, including its own future updates.
 
 Your database, documents, and configuration live outside the installed application entirely, so an
-update â€” or a rollback from a bad one â€” never touches them.
+update — or a rollback from a bad one — never touches them.
 
 Setup also creates the mandatory launcher handoff. A browser shortcut is added on the server
 computer, while `Client Files` receives one checksummed Tauri employee installer containing both
@@ -221,7 +221,7 @@ remaining command from that extracted package directory.
 
 Everything below trusts one file: `release-signing-public.pem`, included in this package. Before
 using it, confirm its SHA-256 fingerprint matches the one the vendor gave you **through a separate
-channel** from wherever you got this package â€” a phone call, a signed email, a contract appendix.
+channel** from wherever you got this package — a phone call, a signed email, a contract appendix.
 Never accept the fingerprint printed alongside the download itself; that's exactly what an attacker
 controlling the download would also control.
 
@@ -254,27 +254,27 @@ $expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8f
 | Check | A failure means |
 | --- | --- |
 | DNS resolution | This machine can't resolve the update server's hostname. Check DNS configuration. |
-| Outbound HTTPS to manifest host | A firewall or proxy is blocking outbound HTTPS. The server needs this reachable permanently, not just during install â€” it's how it gets every future update. |
-| Release public key present / fingerprint match | Either the key file is missing, or it doesn't match the fingerprint you were given. **Treat a mismatch as a possible tampering attempt, not a typo** â€” stop and contact the vendor. |
+| Outbound HTTPS to manifest host | A firewall or proxy is blocking outbound HTTPS. The server needs this reachable permanently, not just during install — it's how it gets every future update. |
+| Release public key present / fingerprint match | Either the key file is missing, or it doesn't match the fingerprint you were given. **Treat a mismatch as a possible tampering attempt, not a typo** — stop and contact the vendor. |
 | Node.js available | Node isn't installed, isn't on the expected path, is older than version 22, or isn't the x64 build. |
 | System tar.exe available | Windows' built-in `tar.exe` (System32) is missing or shadowed by another `tar` on PATH. |
 | NSSM / Caddy present | The path you gave doesn't point at a real file. |
 
-Fix everything reported before continuing â€” each one will surface again, less clearly, during actual
+Fix everything reported before continuing — each one will surface again, less clearly, during actual
 install or first update.
 
 ## Step 5: Verify the release before installing
 
 `verify-release.ps1` downloads the exact release your key would install, checks its signature,
-size, and checksum, and confirms its release marker â€” the same checks the installer and every future
-update apply â€” then deletes the download. It changes nothing on the machine.
+size, and checksum, and confirms its release marker — the same checks the installer and every future
+update apply — then deletes the download. It changes nothing on the machine.
 
 ```powershell
 .\verify-release.ps1 -ManifestUri $manifestUri -PublicKeyPath .\release-signing-public.pem
 ```
 
 A clean run prints the version and release identifier it verified. Any failure here means don't
-proceed with install â€” something about the release doesn't check out, and continuing anyway would
+proceed with install — something about the release doesn't check out, and continuing anyway would
 just fail the same check again during installation, or worse, not fail it.
 
 ## Step 6: Create the server configuration
@@ -382,14 +382,14 @@ What each required flag is:
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
 | `-PublicHostname` | Defaults to `localhost`, which supports using the UI on the server computer. Supply a DNS hostname when employee computers must connect over the network. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
-| `-ServiceUser` | The low-privilege Windows account the application services run as. Not an administrator account â€” the bootstrap deliberately restricts what this account can touch. |
+| `-ServiceUser` | The low-privilege Windows account the application services run as. Not an administrator account — the bootstrap deliberately restricts what this account can touch. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
 | `-AllowDeferredEscrow` | Explicitly installs without recovery packages when custodians do not yet exist. It cannot be combined with either escrow argument and must be treated as a temporary, approved data-loss risk. |
-| `-ManifestUri` | The vendor's update-channel URL. Fixed â€” it's the same URL for every future update too. |
+| `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
 | `-ReleasePublicKeyPath` | The key from [Step 3](#step-3-confirm-you-have-the-right-key). |
 
 It's safe to run more than once. If a release is already installed, it leaves it alone and reports
-that. It refuses to trust a different signing key on a rerun â€” if you need to install a new key,
+that. It refuses to trust a different signing key on a rerun — if you need to install a new key,
 that's a separate, deliberate procedure the vendor will walk you through, not something this script
 does implicitly.
 
@@ -414,7 +414,7 @@ Four Windows services, all managed by NSSM, all set to restart automatically:
 | --- | --- |
 | `TermSheetWeb` | The application itself |
 | `TermSheetWorker` | Background processing (document extraction, etc.) |
-| `TermSheetProxy` | Caddy â€” terminates HTTPS on port 443 |
+| `TermSheetProxy` | Caddy — terminates HTTPS on port 443 |
 | `TermSheetBackup` | Scheduled database/document backups |
 
 Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
@@ -454,7 +454,7 @@ launch the UI directly from the server computer, including a localhost-only inst
 ## Step 9: Verify the mandatory combined employee installer
 
 `C:\TermSheet\Client Files\Term-Sheet-Client-Files.zip` is the employee handoff. It contains one
-Tauri NSIS executableâ€”`Term-Sheet-Extractor-Employee-Setup.exe`â€”with both employee choices:
+Tauri NSIS executable—`Term-Sheet-Extractor-Employee-Setup.exe`—with both employee choices:
 
 - **Sign in to the office server** opens the shared HTTPS application. The server owns the central
   database, documents, workers, approvals, backups, and updater.
@@ -497,7 +497,7 @@ internal CA, IT must also deploy that trust certificate through its normal Windo
 
 **Updates are automatic and require nothing from you.** The updater checks the manifest URL every
 15 minutes by default (configurable at install time), and applies a new signed version if one's
-available â€” downloading it, verifying its signature, taking a backup, running it alongside the
+available — downloading it, verifying its signature, taking a backup, running it alongside the
 current version to confirm it's healthy, and only then switching over. If a newly-installed version
 fails its own health check, the updater automatically switches back to the previous one; you don't
 have to intervene, and the change happens in seconds.
@@ -516,13 +516,13 @@ it as a relative directory beneath the current VS Code or `dist` folder.
 | --- | --- |
 | `status` | What the updater is doing right now: `idle` (nothing to do), `checking`, `downloading`, `staging`, `snapshotting` (taking a pre-update backup), `activating`, `rolling-back`, or `failed`. |
 | `installedVersion` | The version currently serving traffic. |
-| `previousVersion` | What was running before the last successful update â€” the rollback target if needed. |
-| `blockedVersion` | A version the updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version again; a newer signed release is required. If this is set, contact the vendor â€” this generally means a release needs a fix, not that anything is wrong with your server. |
-| `activeReleaseUnhealthy` | If `true`, the currently active release failed its own health checks and an automatic rollback wasn't possible (most often because a database migration can't safely run backwards). This is the one status worth paging someone over â€” the server may be degraded and needs the vendor's attention, ideally restored from the backup noted in `lastSuccessfulUpdateAt`. |
+| `previousVersion` | What was running before the last successful update — the rollback target if needed. |
+| `blockedVersion` | A version the updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version again; a newer signed release is required. If this is set, contact the vendor — this generally means a release needs a fix, not that anything is wrong with your server. |
+| `activeReleaseUnhealthy` | If `true`, the currently active release failed its own health checks and an automatic rollback wasn't possible (most often because a database migration can't safely run backwards). This is the one status worth paging someone over — the server may be degraded and needs the vendor's attention, ideally restored from the backup noted in `lastSuccessfulUpdateAt`. |
 | `lastCheckedAt`, `lastSuccessfulUpdateAt`, `lastFailureAt` | Timestamps, for confirming the updater is actually running on schedule. |
 
 If you gave `-UpdateStatusWebhookUri` at install time, every status change is also posted there
-automatically â€” useful for wiring into existing monitoring rather than polling the file above.
+automatically — useful for wiring into existing monitoring rather than polling the file above.
 
 ### Starting the server and opening the UI again
 
@@ -564,9 +564,9 @@ Get-Content "$env:ProgramData\WinnerZone\TermSheet\logs\TermSheetProxy.err.log" 
 
 **A service won't start.** Check its `.err.log` under `logs\`. Confirm PostgreSQL is reachable and
 `server.env` is present and correctly restricted (only the service account and administrators should
-be able to read it â€” the bootstrap sets this automatically, but a later manual edit can undo it).
+be able to read it — the bootstrap sets this automatically, but a later manual edit can undo it).
 
-**A previous bootstrap stopped at â€œDatabase migration failedâ€ and an administrator created a Prisma
+**A previous bootstrap stopped at “Database migration failed” and an administrator created a Prisma
 config to recover it.** Leave that file in place and rerun the current bootstrap. It prefers the
 signed release's `prisma.config.mjs`, but when resuming an older partial installation it also accepts
 Prisma-supported `prisma.config.*` or `.config\prisma.*` files under `C:\TermSheet\current` or
@@ -583,7 +583,7 @@ Get-Content -LiteralPath "C:\TermSheet\Client Files\server-url.txt" -Raw
 
 **`preflight-connectivity.ps1` or `verify-release.ps1` starts failing after months of working fine.**
 Most likely an outbound firewall or proxy rule changed. If it's specifically the public-key
-fingerprint check that starts failing, stop and contact the vendor before doing anything else â€” that
+fingerprint check that starts failing, stop and contact the vendor before doing anything else — that
 specific failure is what a compromised update channel would look like.
 
 **Disk space errors during an update.** The updater refuses to proceed unless there's room for the
@@ -608,6 +608,6 @@ installation used a custom `StateRoot`; inspect the scheduled task action for it
 ## Getting help
 
 Contact your vendor with the version from `updater-state.json`'s `installedVersion`, the relevant
-lines from the service's `.err.log`, and â€” if it's update-related â€” the full `updater-state.json`.
+lines from the service's `.err.log`, and — if it's update-related — the full `updater-state.json`.
 Don't send `server.env` or anything from the `config\` or `secrets\` folders; the vendor should never
 need those, and they contain your credentials.
