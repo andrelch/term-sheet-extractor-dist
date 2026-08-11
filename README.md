@@ -94,12 +94,14 @@ If WinGet is unavailable, download and run the PostgreSQL 18 x64 EDB installer l
 [official PostgreSQL Windows installers page](https://www.postgresql.org/download/windows/), using
 the same selections above.
 
-Then configure the service, create a separate application login and database, and restrict the
-database to this machine. The commands prompt for both passwords instead of putting them in shell
-history. Passwords have no character-set or length policy here; any non-empty value is accepted.
-The snippets safely quote the application password for PostgreSQL and percent-encode it when it is
-placed in `DATABASE_URL` in Step 6. If `term_sheet_app` already exists, enter its current password:
-the setup keeps the role unchanged and proves the password with a real login before continuing.
+Then configure the service, create separate administrator and application logins, and restrict the
+database to this machine. `term_sheet_extractor_admin` owns the database; `term_sheet_app` is only
+the runtime login placed in `DATABASE_URL`. The commands prompt for passwords instead of putting
+them in shell history. Passwords have no character-set or length policy here; any non-empty value
+is accepted. The snippets safely quote passwords for PostgreSQL and percent-encode the application
+password when it is placed in `DATABASE_URL` in Step 6. If either role already exists, enter its
+current password: setup keeps the role unchanged and proves the password with a real login before
+continuing.
 
 ```powershell
 $pgBin = "C:\Program Files\PostgreSQL\18\bin"
@@ -113,25 +115,61 @@ Set-Service -Name $postgresService.Name -StartupType Automatic
 if ($postgresService.Status -ne "Running") { Start-Service -Name $postgresService.Name }
 
 $postgresPassword = Read-Host "Enter the postgres administrator password" -AsSecureString
+$adminPasswordSecure = Read-Host "Enter the current term_sheet_extractor_admin password, or create one if the role does not exist" -AsSecureString
 $appPasswordSecure = Read-Host "Enter the current term_sheet_app password, or create one if the role does not exist" -AsSecureString
 $postgresPasswordPlain = [Net.NetworkCredential]::new("", $postgresPassword).Password
+$adminDbPassword = [Net.NetworkCredential]::new("", $adminPasswordSecure).Password
 $appDbPassword = [Net.NetworkCredential]::new("", $appPasswordSecure).Password
+if ($adminDbPassword.Length -eq 0) { throw "The database administrator password cannot be empty." }
 if ($appDbPassword.Length -eq 0) { throw "The database password cannot be empty." }
 
 $env:PGPASSWORD = $postgresPasswordPlain
 try {
-  $roleProbe = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
+  $adminRoleProbe = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
+    -c "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'term_sheet_extractor_admin');"
+  if ($LASTEXITCODE -ne 0) { throw "Could not check whether term_sheet_extractor_admin already exists." }
+  $adminRoleProbe = ([string]$adminRoleProbe).Trim()
+  if ($adminRoleProbe -notin @("t", "f")) { throw "PostgreSQL returned an unexpected administrator-role check result: '$adminRoleProbe'." }
+  $adminRoleExists = $adminRoleProbe -eq "t"
+
+  if (-not $adminRoleExists) {
+    $adminPasswordSql = $adminDbPassword.Replace("'", "''")
+    "CREATE ROLE term_sheet_extractor_admin LOGIN PASSWORD '$adminPasswordSql';" |
+      & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres
+    $adminPasswordSql = $null
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_extractor_admin role." }
+  }
+
+  $appRoleProbe = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
     -c "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'term_sheet_app');"
   if ($LASTEXITCODE -ne 0) { throw "Could not check whether term_sheet_app already exists." }
-  $roleProbe = ([string]$roleProbe).Trim()
-  if ($roleProbe -notin @("t", "f")) { throw "PostgreSQL returned an unexpected role check result: '$roleProbe'." }
-  $roleExists = $roleProbe -eq "t"
+  $appRoleProbe = ([string]$appRoleProbe).Trim()
+  if ($appRoleProbe -notin @("t", "f")) { throw "PostgreSQL returned an unexpected application-role check result: '$appRoleProbe'." }
+  $appRoleExists = $appRoleProbe -eq "t"
 
-  if (-not $roleExists) {
-    "CREATE ROLE term_sheet_app LOGIN PASSWORD :'app_password';" |
-      & $psql -X -v ON_ERROR_STOP=1 -v "app_password=$appDbPassword" -U postgres -d postgres
+  if (-not $appRoleExists) {
+    $appPasswordSql = $appDbPassword.Replace("'", "''")
+    "CREATE ROLE term_sheet_app LOGIN PASSWORD '$appPasswordSql';" |
+      & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres
+    $appPasswordSql = $null
     if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_app role." }
   }
+
+  $env:PGPASSWORD = $adminDbPassword
+  & $psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U term_sheet_extractor_admin -d postgres `
+    -c "SELECT current_user;" | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "The entered term_sheet_extractor_admin password was rejected. If the role already existed, enter its current password or reset it as the postgres administrator."
+  }
+
+  $env:PGPASSWORD = $appDbPassword
+  & $psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U term_sheet_app -d postgres `
+    -c "SELECT current_user;" | Out-Null
+  if ($LASTEXITCODE -ne 0) {
+    throw "The entered term_sheet_app password was rejected. If the role already existed, enter its current password or reset it as the postgres administrator."
+  }
+
+  $env:PGPASSWORD = $postgresPasswordPlain
 
   $databaseOwner = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
     -c "SELECT COALESCE((SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'term_sheet_extractor'), '');"
@@ -139,11 +177,39 @@ try {
   $databaseOwner = ([string]$databaseOwner).Trim()
   if (-not $databaseOwner) {
     & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
-      -c "CREATE DATABASE term_sheet_extractor OWNER term_sheet_app;"
+      -c "CREATE DATABASE term_sheet_extractor OWNER term_sheet_extractor_admin;"
     if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_extractor database." }
-  } elseif ($databaseOwner -ne "term_sheet_app") {
-    throw "The existing term_sheet_extractor database is owned by '$databaseOwner', not term_sheet_app. Stop and have the PostgreSQL administrator review it."
+  } elseif ($databaseOwner -ne "term_sheet_extractor_admin") {
+    if ($databaseOwner -eq "postgres") {
+      $currentOwnerPasswordPlain = $postgresPasswordPlain
+    } elseif ($databaseOwner -eq "term_sheet_app") {
+      $currentOwnerPasswordPlain = $appDbPassword
+    } else {
+      $currentOwnerPasswordSecure = Read-Host "The existing database is owned by '$databaseOwner'. Enter that database owner's password to authorize transfer to term_sheet_extractor_admin" -AsSecureString
+      $currentOwnerPasswordPlain = [Net.NetworkCredential]::new("", $currentOwnerPasswordSecure).Password
+    }
+    if ($currentOwnerPasswordPlain.Length -eq 0) { throw "The current database owner's password cannot be empty; ownership was not changed." }
+
+    $env:PGPASSWORD = $currentOwnerPasswordPlain
+    & $psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U $databaseOwner -d term_sheet_extractor `
+      -c "SELECT current_user;" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+      throw "The password for current database owner '$databaseOwner' was rejected; ownership was not changed."
+    }
+
+    $env:PGPASSWORD = $postgresPasswordPlain
+    & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
+      -c "ALTER DATABASE term_sheet_extractor OWNER TO term_sheet_extractor_admin;"
+    if ($LASTEXITCODE -ne 0) { throw "Could not transfer database ownership to term_sheet_extractor_admin." }
+    $currentOwnerPasswordPlain = $null
   }
+
+  & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
+    -c "GRANT CONNECT, TEMPORARY ON DATABASE term_sheet_extractor TO term_sheet_app;"
+  if ($LASTEXITCODE -ne 0) { throw "Could not grant term_sheet_app access to the database." }
+  & $psql -X -v ON_ERROR_STOP=1 -U postgres -d term_sheet_extractor `
+    -c "GRANT USAGE, CREATE ON SCHEMA public TO term_sheet_app;"
+  if ($LASTEXITCODE -ne 0) { throw "Could not grant term_sheet_app access to the public schema." }
 
   & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
     -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
@@ -151,6 +217,9 @@ try {
 } finally {
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
   $postgresPasswordPlain = $null
+  $currentOwnerPasswordPlain = $null
+  $adminPasswordSql = $null
+  $appPasswordSql = $null
 }
 
 Restart-Service -Name $postgresService.Name
@@ -174,9 +243,11 @@ if (-not (Get-NetFirewallRule -DisplayName "Block Term Sheet PostgreSQL from LAN
 ```
 
 Keep this PowerShell window open until Step 6 so `$appDbPassword` can be written into the server
-configuration. For an existing role, the successful login test is what proves the entered password
-is current; PostgreSQL never exposes the stored password. Do not send or screenshot either database
-password.
+configuration. Keep the `term_sheet_extractor_admin` password in the organization's password vault;
+the running application does not use it. For an existing role, the successful login test is what
+proves the entered password is current; PostgreSQL never exposes the stored password. If an older or
+manually created database has a different owner, setup asks for that owner's password and verifies
+it before transferring only the database ownership. Do not send or screenshot any database password.
 
 ### Step 1.3: Install the remaining prerequisites
 
