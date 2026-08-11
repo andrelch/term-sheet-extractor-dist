@@ -98,7 +98,8 @@ Then configure the service, create a separate application login and database, an
 database to this machine. The commands prompt for both passwords instead of putting them in shell
 history. Passwords have no character-set or length policy here; any non-empty value is accepted.
 The snippets safely quote the application password for PostgreSQL and percent-encode it when it is
-placed in `DATABASE_URL` in Step 6.
+placed in `DATABASE_URL` in Step 6. If `term_sheet_app` already exists, enter its current password:
+the setup keeps the role unchanged and proves the password with a real login before continuing.
 
 ```powershell
 $pgBin = "C:\Program Files\PostgreSQL\18\bin"
@@ -112,19 +113,41 @@ Set-Service -Name $postgresService.Name -StartupType Automatic
 if ($postgresService.Status -ne "Running") { Start-Service -Name $postgresService.Name }
 
 $postgresPassword = Read-Host "Enter the postgres administrator password" -AsSecureString
-$appPasswordSecure = Read-Host "Create a password for term_sheet_app (any non-empty value)" -AsSecureString
+$appPasswordSecure = Read-Host "Enter the current term_sheet_app password, or create one if the role does not exist" -AsSecureString
 $postgresPasswordPlain = [Net.NetworkCredential]::new("", $postgresPassword).Password
 $appDbPassword = [Net.NetworkCredential]::new("", $appPasswordSecure).Password
 if ($appDbPassword.Length -eq 0) { throw "The database password cannot be empty." }
 
 $env:PGPASSWORD = $postgresPasswordPlain
 try {
-  @"
-CREATE ROLE term_sheet_app LOGIN PASSWORD :'app_password';
-CREATE DATABASE term_sheet_extractor OWNER term_sheet_app;
-ALTER SYSTEM SET listen_addresses = 'localhost';
-"@ | & $psql -v ON_ERROR_STOP=1 -v "app_password=$appDbPassword" -U postgres -d postgres
-  if ($LASTEXITCODE -ne 0) { throw "PostgreSQL application database setup failed." }
+  $roleProbe = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
+    -c "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'term_sheet_app');"
+  if ($LASTEXITCODE -ne 0) { throw "Could not check whether term_sheet_app already exists." }
+  $roleProbe = ([string]$roleProbe).Trim()
+  if ($roleProbe -notin @("t", "f")) { throw "PostgreSQL returned an unexpected role check result: '$roleProbe'." }
+  $roleExists = $roleProbe -eq "t"
+
+  if (-not $roleExists) {
+    "CREATE ROLE term_sheet_app LOGIN PASSWORD :'app_password';" |
+      & $psql -X -v ON_ERROR_STOP=1 -v "app_password=$appDbPassword" -U postgres -d postgres
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_app role." }
+  }
+
+  $databaseOwner = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
+    -c "SELECT COALESCE((SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'term_sheet_extractor'), '');"
+  if ($LASTEXITCODE -ne 0) { throw "Could not inspect the term_sheet_extractor database." }
+  $databaseOwner = ([string]$databaseOwner).Trim()
+  if (-not $databaseOwner) {
+    & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
+      -c "CREATE DATABASE term_sheet_extractor OWNER term_sheet_app;"
+    if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_extractor database." }
+  } elseif ($databaseOwner -ne "term_sheet_app") {
+    throw "The existing term_sheet_extractor database is owned by '$databaseOwner', not term_sheet_app. Stop and have the PostgreSQL administrator review it."
+  }
+
+  & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
+    -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
+  if ($LASTEXITCODE -ne 0) { throw "Could not restrict PostgreSQL to localhost." }
 } finally {
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
   $postgresPasswordPlain = $null
@@ -137,7 +160,9 @@ $env:PGPASSWORD = $appDbPassword
 try {
   & $psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U term_sheet_app -d term_sheet_extractor `
     -c "SELECT current_user, current_database();"
-  if ($LASTEXITCODE -ne 0) { throw "The application database login test failed." }
+  if ($LASTEXITCODE -ne 0) {
+    throw "The entered term_sheet_app password was rejected. If the role already existed, enter its current password or reset it as a PostgreSQL administrator."
+  }
 } finally {
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
 }
@@ -149,7 +174,9 @@ if (-not (Get-NetFirewallRule -DisplayName "Block Term Sheet PostgreSQL from LAN
 ```
 
 Keep this PowerShell window open until Step 6 so `$appDbPassword` can be written into the server
-configuration. Do not send or screenshot either database password.
+configuration. For an existing role, the successful login test is what proves the entered password
+is current; PostgreSQL never exposes the stored password. Do not send or screenshot either database
+password.
 
 ### Step 1.3: Install the remaining prerequisites
 
@@ -191,10 +218,10 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.1/term-sheet-bootstrap-0.2.8.1.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.1/term-sheet-bootstrap-0.2.8.1.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.1-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.1.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.2/term-sheet-bootstrap-0.2.8.2.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.2/term-sheet-bootstrap-0.2.8.2.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.2-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.2.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
 New-Item -ItemType Directory -Path $downloadRoot -ErrorAction Stop | Out-Null
@@ -205,7 +232,7 @@ $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Tri
 $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch." }
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.1"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.2"
 Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $packageDirectory
 Set-Location $packageDirectory
 Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, .\bootstrap-windows-server.ps1
