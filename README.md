@@ -1,4 +1,4 @@
-# Term Sheet server â€” operator guide
+# Term Sheet server 0.2.8.0 operator guide
 
 > Verified against the current bootstrap, updater, release layout, and service installer on
 > 11 August 2026.
