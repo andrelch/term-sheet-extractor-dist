@@ -87,7 +87,7 @@ In the installer:
    not required by this application.
 3. Keep the database data directory on the protected `C:` drive unless your organization's storage
    policy specifies another protected volume.
-4. Set and securely record a strong password for the `postgres` database administrator.
+4. Set and securely record a password for the `postgres` database administrator.
 5. Keep port `5432` and complete the installation. Do not expose this port to the LAN.
 
 If WinGet is unavailable, download and run the PostgreSQL 18 x64 EDB installer linked from the
@@ -96,8 +96,9 @@ the same selections above.
 
 Then configure the service, create a separate application login and database, and restrict the
 database to this machine. The commands prompt for both passwords instead of putting them in shell
-history. The application password must be at least 24 URL-safe characters because it will be used
-in `DATABASE_URL` in Step 6.
+history. Passwords have no character-set or length policy here; any non-empty value is accepted.
+The snippets safely quote the application password for PostgreSQL and percent-encode it when it is
+placed in `DATABASE_URL` in Step 6.
 
 ```powershell
 $pgBin = "C:\Program Files\PostgreSQL\18\bin"
@@ -111,20 +112,18 @@ Set-Service -Name $postgresService.Name -StartupType Automatic
 if ($postgresService.Status -ne "Running") { Start-Service -Name $postgresService.Name }
 
 $postgresPassword = Read-Host "Enter the postgres administrator password" -AsSecureString
-$appPasswordSecure = Read-Host "Create a URL-safe password (24+ characters) for term_sheet_app" -AsSecureString
+$appPasswordSecure = Read-Host "Create a password for term_sheet_app (any non-empty value)" -AsSecureString
 $postgresPasswordPlain = [Net.NetworkCredential]::new("", $postgresPassword).Password
 $appDbPassword = [Net.NetworkCredential]::new("", $appPasswordSecure).Password
-if ($appDbPassword -notmatch '^[A-Za-z0-9._~-]{24,}$') {
-  throw "Use at least 24 characters containing only letters, numbers, period, underscore, tilde, or hyphen."
-}
+if ($appDbPassword.Length -eq 0) { throw "The database password cannot be empty." }
 
 $env:PGPASSWORD = $postgresPasswordPlain
 try {
   @"
-CREATE ROLE term_sheet_app LOGIN PASSWORD '$appDbPassword';
+CREATE ROLE term_sheet_app LOGIN PASSWORD :'app_password';
 CREATE DATABASE term_sheet_extractor OWNER term_sheet_app;
 ALTER SYSTEM SET listen_addresses = 'localhost';
-"@ | & $psql -v ON_ERROR_STOP=1 -U postgres -d postgres
+"@ | & $psql -v ON_ERROR_STOP=1 -v "app_password=$appDbPassword" -U postgres -d postgres
   if ($LASTEXITCODE -ne 0) { throw "PostgreSQL application database setup failed." }
 } finally {
   Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
@@ -192,10 +191,10 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.0/term-sheet-bootstrap-0.2.8.0.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.0/term-sheet-bootstrap-0.2.8.0.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.0-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.0.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.1/term-sheet-bootstrap-0.2.8.1.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.1/term-sheet-bootstrap-0.2.8.1.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.1-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.1.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
 New-Item -ItemType Directory -Path $downloadRoot -ErrorAction Stop | Out-Null
@@ -206,7 +205,7 @@ $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Tri
 $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
 if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch." }
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.0"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.1"
 Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $packageDirectory
 Set-Location $packageDirectory
 Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, .\bootstrap-windows-server.ps1
@@ -288,17 +287,18 @@ $configFile = Join-Path $env:ProgramData "WinnerZone\TermSheet\config\server.env
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configFile) | Out-Null
 Copy-Item -LiteralPath .\server.env.example -Destination $configFile -ErrorAction Stop
 
-if ([string]::IsNullOrWhiteSpace($appDbPassword)) {
+if ([string]::IsNullOrEmpty($appDbPassword)) {
   $appPasswordSecure = Read-Host "Re-enter the term_sheet_app database password from Step 1" -AsSecureString
   $appDbPassword = [Net.NetworkCredential]::new("", $appPasswordSecure).Password
 }
-if ($appDbPassword -notmatch '^[A-Za-z0-9._~-]{24,}$') { throw "The database password is not URL-safe." }
+if ($appDbPassword.Length -eq 0) { throw "The database password cannot be empty." }
 
 $authBytes = New-Object byte[] 48
 $random = [Security.Cryptography.RandomNumberGenerator]::Create()
 try { $random.GetBytes($authBytes) } finally { $random.Dispose() }
 $authSecret = [Convert]::ToBase64String($authBytes)
-$databaseUrl = "postgresql://term_sheet_app:$appDbPassword@127.0.0.1:5432/term_sheet_extractor?schema=public"
+$encodedAppDbPassword = [Uri]::EscapeDataString($appDbPassword)
+$databaseUrl = "postgresql://term_sheet_app:$encodedAppDbPassword@127.0.0.1:5432/term_sheet_extractor?schema=public"
 
 $config = Get-Content -LiteralPath $configFile -Raw
 $config = [regex]::Replace($config, '(?m)^DATABASE_URL=.*$', ('DATABASE_URL="' + $databaseUrl + '"'))
@@ -307,6 +307,7 @@ $config = [regex]::Replace($config, '(?m)^DOCUMENT_STORE_ROOT=.*$', 'DOCUMENT_ST
 [IO.File]::WriteAllText($configFile, $config, (New-Object Text.UTF8Encoding($false)))
 
 $appDbPassword = $null
+$encodedAppDbPassword = $null
 $authSecret = $null
 notepad.exe $configFile
 ```
