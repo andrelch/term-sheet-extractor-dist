@@ -39,9 +39,14 @@ Confirm it is elevated before installing anything:
 ```powershell
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  throw "Close this window and open Windows PowerShell with Run as administrator."
+  Write-Host "This window is not elevated. Accept the Windows prompt to open an administrator window."
+  Start-Process powershell.exe -Verb RunAs
+  return
 }
 ```
+
+If elevation is declined, nothing is changed. Accept it later and restart Step 1; every installation
+and check below is safe to rerun.
 
 ### Step 1.1: Install Node.js 22 x64
 
@@ -70,6 +75,10 @@ the [official Node.js download page](https://nodejs.org/en/download), run the MS
 accept the default machine-wide PATH option, open a new elevated PowerShell window, and run the two
 verification commands above.
 
+If WinGet says Node.js 22 is already installed, do not uninstall it: refresh `PATH` and run the two
+checks again. If either check is still wrong, repair the existing Node.js 22 x64 installation from
+Windows Installed Apps, then rerun Step 1.1.
+
 ### Step 1.2: Install and configure PostgreSQL 18 x64
 
 PostgreSQL 18 is the supported database major and must be installed with its command-line tools.
@@ -94,160 +103,17 @@ If WinGet is unavailable, download and run the PostgreSQL 18 x64 EDB installer l
 [official PostgreSQL Windows installers page](https://www.postgresql.org/download/windows/), using
 the same selections above.
 
-Then configure the service, create separate administrator and application logins, and restrict the
-database to this machine. `term_sheet_extractor_admin` owns the database; `term_sheet_app` is only
-the runtime login placed in `DATABASE_URL`. The commands prompt for passwords instead of putting
-them in shell history. Passwords have no character-set or length policy here; any non-empty value
-is accepted. The snippets safely quote passwords for PostgreSQL and percent-encode the application
-password when it is placed in `DATABASE_URL` in Step 6. If either role already exists, enter its
-current password: setup keeps the role unchanged and proves the password with a real login before
-continuing.
+If PostgreSQL 18 is already present, keep it and continue; the Step 7 bootstrap helper discovers and
+repairs the existing cluster. If the installer reports an incomplete installation, use its Repair option,
+confirm `C:\Program Files\PostgreSQL\18\bin\psql.exe` exists, then rerun this step.
 
-```powershell
-$pgBin = "C:\Program Files\PostgreSQL\18\bin"
-$psql = Join-Path $pgBin "psql.exe"
-$pgIsReady = Join-Path $pgBin "pg_isready.exe"
-if (-not (Test-Path -LiteralPath $psql)) { throw "PostgreSQL 18 command-line tools were not installed at $pgBin." }
-
-$postgresService = Get-Service -Name "postgresql*18*" | Select-Object -First 1
-if (-not $postgresService) { throw "The PostgreSQL 18 Windows service was not found." }
-Set-Service -Name $postgresService.Name -StartupType Automatic
-if ($postgresService.Status -ne "Running") { Start-Service -Name $postgresService.Name }
-
-$postgresPassword = Read-Host "Enter the postgres administrator password" -AsSecureString
-$adminPasswordSecure = Read-Host "Enter the current term_sheet_extractor_admin password, or create one if the role does not exist" -AsSecureString
-$appPasswordSecure = Read-Host "Enter the current term_sheet_app password, or create one if the role does not exist" -AsSecureString
-$postgresPasswordPlain = [Net.NetworkCredential]::new("", $postgresPassword).Password
-$adminDbPassword = [Net.NetworkCredential]::new("", $adminPasswordSecure).Password
-$appDbPassword = [Net.NetworkCredential]::new("", $appPasswordSecure).Password
-if ($adminDbPassword.Length -eq 0) { throw "The database administrator password cannot be empty." }
-if ($appDbPassword.Length -eq 0) { throw "The database password cannot be empty." }
-
-$env:PGPASSWORD = $postgresPasswordPlain
-try {
-  $adminRoleProbe = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
-    -c "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'term_sheet_extractor_admin');"
-  if ($LASTEXITCODE -ne 0) { throw "Could not check whether term_sheet_extractor_admin already exists." }
-  $adminRoleProbe = ([string]$adminRoleProbe).Trim()
-  if ($adminRoleProbe -notin @("t", "f")) { throw "PostgreSQL returned an unexpected administrator-role check result: '$adminRoleProbe'." }
-  $adminRoleExists = $adminRoleProbe -eq "t"
-
-  if (-not $adminRoleExists) {
-    $adminPasswordSql = $adminDbPassword.Replace("'", "''")
-    "CREATE ROLE term_sheet_extractor_admin LOGIN PASSWORD '$adminPasswordSql';" |
-      & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres
-    $adminPasswordSql = $null
-    if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_extractor_admin role." }
-  }
-
-  $appRoleProbe = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
-    -c "SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'term_sheet_app');"
-  if ($LASTEXITCODE -ne 0) { throw "Could not check whether term_sheet_app already exists." }
-  $appRoleProbe = ([string]$appRoleProbe).Trim()
-  if ($appRoleProbe -notin @("t", "f")) { throw "PostgreSQL returned an unexpected application-role check result: '$appRoleProbe'." }
-  $appRoleExists = $appRoleProbe -eq "t"
-
-  if (-not $appRoleExists) {
-    $appPasswordSql = $appDbPassword.Replace("'", "''")
-    "CREATE ROLE term_sheet_app LOGIN PASSWORD '$appPasswordSql';" |
-      & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres
-    $appPasswordSql = $null
-    if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_app role." }
-  }
-
-  $env:PGPASSWORD = $adminDbPassword
-  & $psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U term_sheet_extractor_admin -d postgres `
-    -c "SELECT current_user;" | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw "The entered term_sheet_extractor_admin password was rejected. If the role already existed, enter its current password or reset it as the postgres administrator."
-  }
-
-  $env:PGPASSWORD = $appDbPassword
-  & $psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U term_sheet_app -d postgres `
-    -c "SELECT current_user;" | Out-Null
-  if ($LASTEXITCODE -ne 0) {
-    throw "The entered term_sheet_app password was rejected. If the role already existed, enter its current password or reset it as the postgres administrator."
-  }
-
-  $env:PGPASSWORD = $postgresPasswordPlain
-
-  $databaseOwner = & $psql -X -q -t -A -v ON_ERROR_STOP=1 -U postgres -d postgres `
-    -c "SELECT COALESCE((SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'term_sheet_extractor'), '');"
-  if ($LASTEXITCODE -ne 0) { throw "Could not inspect the term_sheet_extractor database." }
-  $databaseOwner = ([string]$databaseOwner).Trim()
-  if (-not $databaseOwner) {
-    & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
-      -c "CREATE DATABASE term_sheet_extractor OWNER term_sheet_extractor_admin;"
-    if ($LASTEXITCODE -ne 0) { throw "Could not create the term_sheet_extractor database." }
-  } elseif ($databaseOwner -ne "term_sheet_extractor_admin") {
-    if ($databaseOwner -eq "postgres") {
-      $currentOwnerPasswordPlain = $postgresPasswordPlain
-    } elseif ($databaseOwner -eq "term_sheet_app") {
-      $currentOwnerPasswordPlain = $appDbPassword
-    } else {
-      $currentOwnerPasswordSecure = Read-Host "The existing database is owned by '$databaseOwner'. Enter that database owner's password to authorize transfer to term_sheet_extractor_admin" -AsSecureString
-      $currentOwnerPasswordPlain = [Net.NetworkCredential]::new("", $currentOwnerPasswordSecure).Password
-    }
-    if ($currentOwnerPasswordPlain.Length -eq 0) { throw "The current database owner's password cannot be empty; ownership was not changed." }
-
-    $env:PGPASSWORD = $currentOwnerPasswordPlain
-    & $psql -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -U $databaseOwner -d term_sheet_extractor `
-      -c "SELECT current_user;" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-      throw "The password for current database owner '$databaseOwner' was rejected; ownership was not changed."
-    }
-
-    $env:PGPASSWORD = $postgresPasswordPlain
-    & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
-      -c "ALTER DATABASE term_sheet_extractor OWNER TO term_sheet_extractor_admin;"
-    if ($LASTEXITCODE -ne 0) { throw "Could not transfer database ownership to term_sheet_extractor_admin." }
-    $currentOwnerPasswordPlain = $null
-  }
-
-  & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
-    -c "GRANT CONNECT, TEMPORARY ON DATABASE term_sheet_extractor TO term_sheet_app;"
-  if ($LASTEXITCODE -ne 0) { throw "Could not grant term_sheet_app access to the database." }
-  & $psql -X -v ON_ERROR_STOP=1 -U postgres -d term_sheet_extractor `
-    -c "GRANT USAGE, CREATE ON SCHEMA public TO term_sheet_app;"
-  if ($LASTEXITCODE -ne 0) { throw "Could not grant term_sheet_app access to the public schema." }
-
-  & $psql -X -v ON_ERROR_STOP=1 -U postgres -d postgres `
-    -c "ALTER SYSTEM SET listen_addresses = 'localhost';"
-  if ($LASTEXITCODE -ne 0) { throw "Could not restrict PostgreSQL to localhost." }
-} finally {
-  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
-  $postgresPasswordPlain = $null
-  $currentOwnerPasswordPlain = $null
-  $adminPasswordSql = $null
-  $appPasswordSql = $null
-}
-
-Restart-Service -Name $postgresService.Name
-& $pgIsReady -h 127.0.0.1 -p 5432
-
-$env:PGPASSWORD = $appDbPassword
-try {
-  & $psql -v ON_ERROR_STOP=1 -h 127.0.0.1 -U term_sheet_app -d term_sheet_extractor `
-    -c "SELECT current_user, current_database();"
-  if ($LASTEXITCODE -ne 0) {
-    throw "The entered term_sheet_app password was rejected. If the role already existed, enter its current password or reset it as a PostgreSQL administrator."
-  }
-} finally {
-  Remove-Item Env:PGPASSWORD -ErrorAction SilentlyContinue
-}
-
-if (-not (Get-NetFirewallRule -DisplayName "Block Term Sheet PostgreSQL from LAN" -ErrorAction SilentlyContinue)) {
-  New-NetFirewallRule -DisplayName "Block Term Sheet PostgreSQL from LAN" `
-    -Direction Inbound -LocalPort 5432 -Protocol TCP -Action Block
-}
-```
-
-Keep this PowerShell window open until Step 6 so `$appDbPassword` can be written into the server
-configuration. Keep the `term_sheet_extractor_admin` password in the organization's password vault;
-the running application does not use it. For an existing role, the successful login test is what
-proves the entered password is current; PostgreSQL never exposes the stored password. If an older or
-manually created database has a different owner, setup asks for that owner's password and verifies
-it before transferring only the database ownership. Do not send or screenshot any database password.
+Database configuration happens with the verified `configure-postgresql18.ps1` helper during
+Step 7. Do not manually create roles or a database here. The helper handles fresh installations,
+safe reruns, existing login or non-login roles, forgotten application-role passwords, a database
+already owned by `term_sheet_extractor_admin`, the older `term_sheet_app` ownership layout, and a
+database owned by another administrator. It also corrects runtime grants, the firewall rule, service
+startup, loopback binding, and ownership of pre-existing application objects in the dedicated
+`public` schema. Password mistakes prompt again instead of terminating setup.
 
 ### Step 1.3: Install the remaining prerequisites
 
@@ -267,18 +133,28 @@ account solely for setup:
 
 ```powershell
 $serviceUser = "$env:COMPUTERNAME\$env:USERNAME"
-$serviceCredential = Get-Credential -UserName $serviceUser `
-  -Message "Enter the current Windows account password used to run the Term Sheet services"
-
-# This must resolve before bootstrap; otherwise Windows cannot apply its folder permissions.
-$serviceAccount = New-Object Security.Principal.NTAccount($serviceUser)
-$serviceAccount.Translate([Security.Principal.SecurityIdentifier]).Value
+do {
+  try {
+    $serviceAccount = New-Object Security.Principal.NTAccount($serviceUser)
+    $serviceSid = $serviceAccount.Translate([Security.Principal.SecurityIdentifier]).Value
+    $serviceCredential = Get-Credential -UserName $serviceUser `
+      -Message "Enter the current Windows account password used to run the Term Sheet services"
+    if (-not $serviceCredential) { Write-Warning "No credential was entered." }
+  } catch {
+    Write-Warning "'$serviceUser' did not resolve: $($_.Exception.Message)"
+    $serviceUser = Read-Host "Enter COMPUTERNAME\username or DOMAIN\username, or press Enter to stop"
+    if (-not $serviceUser) { return }
+  }
+} until ($serviceSid -and $serviceCredential)
+$serviceSid
 ```
 
 If the signed-in account is a domain account, set `$serviceUser` to its real `DOMAIN\username`
 instead. A dedicated service account or gMSA remains supported when company policy requires one;
 set `$serviceUser` and `$serviceCredential` to that approved identity. The bootstrap resolves the
 account to a SID before changing files or services, so a wrong account name fails before installation.
+If the password is rejected during Step 7, run this credential block again and rerun the same
+bootstrap command; no partial service installation needs to be removed first.
 
 ## Step 2: Download and extract the bootstrap package
 
@@ -289,29 +165,45 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.2/term-sheet-bootstrap-0.2.8.2.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.2/term-sheet-bootstrap-0.2.8.2.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.2-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.2.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.3/term-sheet-bootstrap-0.2.8.3.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.3/term-sheet-bootstrap-0.2.8.3.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.3-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.3.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-New-Item -ItemType Directory -Path $downloadRoot -ErrorAction Stop | Out-Null
-Invoke-WebRequest -Uri $bootstrapUrl -OutFile $bootstrapZip -UseBasicParsing
-Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing
-
-$expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-$actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch." }
-
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.2"
-Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $packageDirectory
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.3"
+New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
+if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connectivity.ps1"))) {
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      Invoke-WebRequest -Uri $bootstrapUrl -OutFile "$bootstrapZip.part" -UseBasicParsing -ErrorAction Stop
+      Move-Item -LiteralPath "$bootstrapZip.part" -Destination $bootstrapZip -Force
+      Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing -ErrorAction Stop
+      $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+      $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch; the download will not be used." }
+      $stagingDirectory = "$packageDirectory.extracting"
+      if (Test-Path -LiteralPath $stagingDirectory) { Remove-Item -LiteralPath $stagingDirectory -Recurse -Force }
+      Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $stagingDirectory -ErrorAction Stop
+      if (Test-Path -LiteralPath $packageDirectory) { $packageDirectory = "$packageDirectory-$(Get-Date -Format yyyyMMddHHmmss)" }
+      Move-Item -LiteralPath $stagingDirectory -Destination $packageDirectory
+      break
+    } catch {
+      Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
+      Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
+      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Step 2." }
+      Read-Host "Correct the reported problem, then press Enter to retry"
+    }
+  }
+}
 Set-Location $packageDirectory
-Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, .\bootstrap-windows-server.ps1
+Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, `
+  .\configure-postgresql18.ps1, .\bootstrap-windows-server.ps1
 Get-ChildItem .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe, `
   .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe.sha256
 ```
 
-The commands must list all three scripts plus one employee installer and its checksum. Run every
+The commands must list all four scripts plus one employee installer and its checksum. Run every
 remaining command from that extracted package directory.
 
 ## Step 3: Confirm you have the right key
@@ -331,9 +223,9 @@ contact the vendor immediately.
 
 ## Step 4: Check the machine
 
-`preflight-connectivity.ps1` confirms the machine is ready before you commit to an install. It makes
-no changes, needs no administrator rights, and reports every problem it finds in one pass rather than
-stopping at the first one.
+`preflight-connectivity.ps1` confirms the machine is ready before you commit to an install. Its
+checks are read-only and report every problem in one pass. The optional remediation mode below only
+makes a change if you explicitly accept its pinned Node.js installation prompt.
 
 The distribution copy of this guide fills in the exact manifest URL and signing-key fingerprint
 when a release is published. Keep both values quoted if you copy this template from a source
@@ -345,7 +237,7 @@ $expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8f
 
 .\preflight-connectivity.ps1 -ManifestUri $manifestUri `
   -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint $expectedFingerprint `
-  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe
+  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe -OfferRemediation
 ```
 
 | Check | A failure means |
@@ -359,6 +251,13 @@ $expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8f
 
 Fix everything reported before continuing — each one will surface again, less clearly, during actual
 install or first update.
+
+The JSON result includes a `remediation` for every failed check. With `-OfferRemediation`, the script
+also prints those actions and can install the pinned Node.js 22 x64 package after confirmation when
+WinGet is present. Network, tool-path, and Windows-component repairs are proposed without changing
+company policy. A missing key can be repaired by re-extracting a clean package; a fingerprint
+mismatch is never bypassed and must be escalated to the vendor. Fix the listed items and rerun the
+same command until every check passes.
 
 ## Step 5: Verify the release before installing
 
@@ -374,80 +273,48 @@ A clean run prints the version and release identifier it verified. Any failure h
 proceed with install — something about the release doesn't check out, and continuing anyway would
 just fail the same check again during installation, or worse, not fail it.
 
-## Step 6: Create the server configuration
+For a timeout or HTTPS error, apply the matching Step 4 network remediation and rerun verification.
+For a missing file, re-extract the verified bootstrap ZIP into a fresh directory. A signature,
+checksum, release-marker, or signing-key failure is not repairable on the client machine: discard
+the downloaded copy, obtain a fresh package, and contact the vendor if the fresh copy also fails.
+There is no supported switch that bypasses these checks.
 
-The bootstrap requires the persistent configuration file to exist before it runs. Create it from
-the complete example included in the extracted package, insert the database password created in
-Step 1, and generate a separate authentication secret:
+## Step 6: Understand the automatic server configuration
 
-```powershell
-$configFile = Join-Path $env:ProgramData "WinnerZone\TermSheet\config\server.env"
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $configFile) | Out-Null
-Copy-Item -LiteralPath .\server.env.example -Destination $configFile -ErrorAction Stop
+There is no environment-file step to perform. During Step 7, the bootstrap automatically runs the
+verified `configure-postgresql18.ps1` helper, prompts securely for the PostgreSQL administrator and
+application-role passwords it needs, and receives the application password as a `SecureString`.
+It then creates `%ProgramData%\WinnerZone\TermSheet\config\server.env` from the packaged baseline
+and fills in the escaped `DATABASE_URL`, a new 48-byte `AUTH_SECRET`, `C:\TermSheetData\objects`,
+the selected DPAPI or Key Vault provider, and local installation-owner access. It never prints a
+password or writes a temporary password file.
 
-if ([string]::IsNullOrEmpty($appDbPassword)) {
-  $appPasswordSecure = Read-Host "Re-enter the term_sheet_app database password from Step 1" -AsSecureString
-  $appDbPassword = [Net.NetworkCredential]::new("", $appPasswordSecure).Password
-}
-if ($appDbPassword.Length -eq 0) { throw "The database password cannot be empty." }
+The helper safely handles fresh installs, reruns, existing roles, and legacy or third-party database
+owners. Empty, mismatched, or rejected passwords prompt again with a specific recovery action.
+For a PostgreSQL owner created with `NOLOGIN`, the authenticated `postgres` administrator must type `TRANSFER` explicitly before ownership changes.
+The bootstrap preserves an existing configuration and authentication secret on every rerun. It also
+rejects a populated `DOCUMENT_STORE_MASTER_KEY`, because the central key belongs in DPAPI or Azure
+Key Vault rather than in an environment file.
 
-$authBytes = New-Object byte[] 48
-$random = [Security.Cryptography.RandomNumberGenerator]::Create()
-try { $random.GetBytes($authBytes) } finally { $random.Dispose() }
-$authSecret = [Convert]::ToBase64String($authBytes)
-$encodedAppDbPassword = [Uri]::EscapeDataString($appDbPassword)
-$databaseUrl = "postgresql://term_sheet_app:$encodedAppDbPassword@127.0.0.1:5432/term_sheet_extractor?schema=public"
-
-$config = Get-Content -LiteralPath $configFile -Raw
-$config = [regex]::Replace($config, '(?m)^DATABASE_URL=.*$', ('DATABASE_URL="' + $databaseUrl + '"'))
-$config = [regex]::Replace($config, '(?m)^AUTH_SECRET=.*$', ('AUTH_SECRET=' + $authSecret))
-$config = [regex]::Replace($config, '(?m)^DOCUMENT_STORE_ROOT=.*$', 'DOCUMENT_STORE_ROOT=C:\TermSheetData\objects')
-[IO.File]::WriteAllText($configFile, $config, (New-Object Text.UTF8Encoding($false)))
-
-$appDbPassword = $null
-$encodedAppDbPassword = $null
-$authSecret = $null
-notepad.exe $configFile
-```
-
-In Notepad, fill in the organization's authentication settings and any approved provider settings.
-Never add `DOCUMENT_STORE_MASTER_KEY`; the bootstrap rejects it because the central encryption key
-must be held by DPAPI or Azure Key Vault. Save the file, close Notepad, and confirm the required
-values are no longer blank. Do not print the file to the console:
-
-```powershell
-$requiredNames = @("DATABASE_URL", "AUTH_SECRET")
-$missingNames = foreach ($name in $requiredNames) {
-  if (-not (Select-String -LiteralPath $configFile -Pattern "^$name=.+" -Quiet)) { $name }
-}
-if ($missingNames) { throw "Missing server.env values: $($missingNames -join ', ')" }
-if (Select-String -LiteralPath $configFile -Pattern '^[ \t]*DOCUMENT_STORE_MASTER_KEY[ \t]*=[ \t]*\S+' -Quiet) {
-  throw "Remove DOCUMENT_STORE_MASTER_KEY from server.env."
-}
-```
-
-Choose how provider API keys will be owned:
-
-- **Application-managed (the default):** leave `SECRET_STORE=encrypted` and leave the five provider
-  variables empty. After installation, a trusted application administrator with `data-admin` enters
-  approved keys under **Settings -> API keys**.
-- **IT-managed:** set `SECRET_STORE=environment` and place only approved credentials in
-  `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, `DEEPSEEK_API_KEY`, or `NVIDIA_API_KEY`.
-  Restart the web and worker services after an IT-managed key changes.
-
-Telegram and browser notification credentials follow the same ownership choice. Do not send
-`server.env` to the vendor or include it in a ticket or screenshot.
+Provider API keys deliberately remain blank. After installation, use the localhost server launcher,
+choose **Developer access**, and enter approved keys under **Settings -> API keys**. The default
+`SECRET_STORE=encrypted` stores them through the application's encrypted secret store. Staff and
+provider configuration therefore require no Notepad session and no direct access to `server.env`.
 
 ## Step 7: Install
 
-From an elevated PowerShell session, in this package's directory:
+From an elevated PowerShell session, in this package's directory, run the command below. On a fresh
+installation it calls the packaged PostgreSQL helper and prompts for the necessary database
+passwords before downloading the release. It then creates the protected server configuration
+automatically; do not create or edit `server.env` first.
 
 ```powershell
-$publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter to use localhost on this server only"
-if (-not $publicHostname) { $publicHostname = "localhost" }
-if ($publicHostname -notmatch '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -or $publicHostname.Contains('..')) {
-  throw "Enter a valid DNS hostname or localhost."
-}
+do {
+  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter to use localhost on this server only"
+  if (-not $publicHostname) { $publicHostname = "localhost" }
+  $hostnameIsValid = $publicHostname -match '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -and -not $publicHostname.Contains('..')
+  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for localhost." }
+} until ($hostnameIsValid)
 
 .\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
@@ -492,6 +359,10 @@ that. It refuses to trust a different signing key on a rerun — if you need to 
 that's a separate, deliberate procedure the vendor will walk you through, not something this script
 does implicitly.
 
+If bootstrap stops, keep its error message, apply the specific fix it proposes, and rerun the same
+Step 7 command. It resumes from verified state and recreates missing services or launcher files; do
+not delete `C:\TermSheet`, the data directory, or `%ProgramData%\WinnerZone\TermSheet` to retry.
+
 When the two public certificates become available, add escrow to the existing key from an elevated
 PowerShell session. This command does not rotate the key or rewrite encrypted documents:
 
@@ -517,17 +388,15 @@ Four Windows services, all managed by NSSM, all set to restart automatically:
 | `TermSheetBackup` | Scheduled database/document backups |
 
 Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
-errors). Confirm all four services are running and the updater wrote its initial state:
+errors). Confirm all four services are running, the updater wrote its initial state, and the
+launcher handoff exists. The repair helper reports all problems, offers safe starts, and proposes
+an idempotent bootstrap rerun for missing components:
 
 ```powershell
-$serviceNames = @("TermSheetWeb", "TermSheetWorker", "TermSheetProxy", "TermSheetBackup")
-$services = Get-Service -Name $serviceNames
-$services | Format-Table Name, Status, StartType
-if ($services.Where({ $_.Status -ne "Running" })) { throw "One or more Term Sheet services are not running." }
+.\repair-windows-server.ps1
 
 $stateFile = Join-Path $env:ProgramData "WinnerZone\TermSheet\updater-state.json"
-if (-not (Test-Path -LiteralPath $stateFile)) { throw "Updater state was not created at $stateFile." }
-Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json
+if (Test-Path -LiteralPath $stateFile) { Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json }
 
 Get-NetTCPConnection -State Listen | Where-Object LocalPort -In 443, 3000, 5432 |
   Format-Table LocalAddress, LocalPort, OwningProcess
@@ -549,6 +418,12 @@ the `$publicHostname` supplied in Step 7. If anything looks wrong, inspect the c
 The bootstrap has already installed `Term Sheet Extractor - Server` on the current Windows user's
 Desktop and Start menu. Open it now and confirm the sign-in page loads. This is the supported way to
 launch the UI directly from the server computer, including a localhost-only installation.
+
+On that localhost sign-in page, choose **Developer access**. This provisions and signs in the sole
+installation owner through the server's loopback-only owner door. In **Settings**, create the
+organization's staff access and enter approved provider credentials under **API keys**. The default
+encrypted secret store persists those keys without exposing or editing `server.env`. Employee
+computers cannot use Developer access; they use the staff authentication configured by the owner.
 
 ## Step 9: Verify the mandatory combined employee installer
 
@@ -629,26 +504,21 @@ All Term Sheet services are configured for automatic startup. After a normal Win
 in to the server computer with the Windows account used during setup, wait for the services to start,
 then open **Term Sheet Extractor - Server** from the Desktop or Start menu.
 
-To start or verify everything manually, open **Windows PowerShell as Administrator** and run:
+To start or verify everything manually, open **Windows PowerShell as Administrator** in the retained
+bootstrap directory and run. Add `-AcceptSafeRepairs` to start stopped services and the updater
+without individual prompts; missing components are never guessed or installed from an untrusted
+source:
 
 ```powershell
-$postgresService = Get-Service -Name "postgresql*18*" | Select-Object -First 1
-if (-not $postgresService) { throw "The PostgreSQL 18 service was not found." }
-if ($postgresService.Status -ne "Running") { Start-Service -Name $postgresService.Name }
-
-$serviceNames = @("TermSheetWeb", "TermSheetWorker", "TermSheetBackup", "TermSheetProxy")
-foreach ($name in $serviceNames) {
-  $service = Get-Service -Name $name -ErrorAction Stop
-  if ($service.Status -ne "Running") { Start-Service -Name $name }
-}
-Get-Service -Name (@($postgresService.Name) + $serviceNames) | Format-Table Name, Status, StartType
+.\repair-windows-server.ps1
 
 $localLauncher = "C:\TermSheet\Client Files\Term Sheet Extractor - Server.url"
-if (-not (Test-Path -LiteralPath $localLauncher)) {
-  throw "The server UI launcher is missing at $localLauncher. Rerun bootstrap to regenerate it."
-}
-Start-Process $localLauncher
+if (Test-Path -LiteralPath $localLauncher) { Start-Process $localLauncher }
 ```
+
+If PostgreSQL 18 is missing, reinstall PostgreSQL 18 and rerun Step 7. If a Term Sheet
+service, updater task, or launcher file is missing, rerun Step 7 with the same values. Bootstrap
+preserves the pinned signing key, installed release, data, and existing authentication secret.
 
 If the browser does not load, confirm the application answers on loopback before debugging DNS or
 certificates:
