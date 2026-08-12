@@ -1,7 +1,7 @@
 # Term Sheet server — operator guide
 
 > Verified against the current bootstrap, updater, release layout, and service installer on
-> 11 August 2026.
+> 12 August 2026.
 
 This is for the person installing and running the Term Sheet server on your own Windows machine.
 It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
@@ -165,13 +165,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.3/term-sheet-bootstrap-0.2.8.3.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.3/term-sheet-bootstrap-0.2.8.3.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.3-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.3.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.5/term-sheet-bootstrap-0.2.8.5.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.5/term-sheet-bootstrap-0.2.8.5.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.5-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.5.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.3"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.5"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connectivity.ps1"))) {
   for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -390,7 +390,8 @@ Four Windows services, all managed by NSSM, all set to restart automatically:
 Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
 errors). Confirm all four services are running, the updater wrote its initial state, and the
 launcher handoff exists. The repair helper reports all problems, offers safe starts, and proposes
-an idempotent bootstrap rerun for missing components:
+an idempotent bootstrap rerun for missing components. For ordinary version checks, use
+**Settings → System → Server version and updates**; the commands below are the recovery fallback:
 
 ```powershell
 .\repair-windows-server.ps1
@@ -476,7 +477,22 @@ current version to confirm it's healthy, and only then switching over. If a newl
 fails its own health check, the updater automatically switches back to the previous one; you don't
 have to intervene, and the change happens in seconds.
 
-To check status at any time:
+To check status at any time, sign in with the **Operate the server** capability and open
+**Settings → System → Server version and updates**. It shows the running and available versions,
+the last check and successful installation times, failures, and any safe rollback target. When the
+rollback guard permits it, provide a reason and queue the rollback there; the server restarts and
+the screen reconnects automatically.
+
+An installation created with an older bootstrap may show **Install the current bootstrap maintenance
+package once to enable interface rollback**. Rerun the current verified bootstrap package; it keeps
+the installed application, configuration, signing key, and data in place while refreshing the
+out-of-release updater and adding the one-minute rollback processor.
+
+The version in the downloaded `term-sheet-bootstrap-<version>` folder is only the version of that
+installation/repair package. Its name never changes after installation and must not be used to
+identify the running server version.
+
+If the interface is unavailable, use this PowerShell fallback:
 
 ```powershell
 $stateFile = Join-Path $env:ProgramData "WinnerZone\TermSheet\updater-state.json"
