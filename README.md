@@ -165,13 +165,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.5/term-sheet-bootstrap-0.2.8.5.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.8.5/term-sheet-bootstrap-0.2.8.5.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.8.5-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.5.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.6/term-sheet-bootstrap-0.2.9.6.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.6/term-sheet-bootstrap-0.2.9.6.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.9.6-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.6.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.8.5"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.6"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connectivity.ps1"))) {
   for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -421,10 +421,22 @@ Desktop and Start menu. Open it now and confirm the sign-in page loads. This is 
 launch the UI directly from the server computer, including a localhost-only installation.
 
 On that localhost sign-in page, choose **Developer access**. This provisions and signs in the sole
-installation owner through the server's loopback-only owner door. In **Settings**, create the
-organization's staff access and enter approved provider credentials under **API keys**. The default
-encrypted secret store persists those keys without exposing or editing `server.env`. Employee
-computers cannot use Developer access; they use the staff authentication configured by the owner.
+installation owner through the server's loopback-only owner door. In **Settings → Members**, create
+an active normal administrator and verify that person can sign in through the configured staff
+method before removing owner access. Then, from an elevated PowerShell session on the server, run:
+
+```powershell
+& "C:\TermSheet\current\deploy\set-local-owner-access.ps1" -Enabled false
+```
+
+The command changes only `DEBUG_AUTH` in the protected server configuration and restarts the web
+service, invalidating the debug-owner session. It must be run by a Windows server administrator;
+the application administrator should first confirm their normal sign-in works. To recover the owner
+door later, use the same command with `-Enabled true`.
+
+In **Settings**, enter approved provider credentials under **API keys**. The default encrypted secret
+store persists those keys without exposing or editing `server.env`. Employee computers cannot use
+Developer access; they use the staff authentication configured by the owner.
 
 ## Step 9: Verify the mandatory combined employee installer
 
@@ -446,10 +458,11 @@ private cluster automatically; closing the launcher stops it. A release is block
 automatic initialization passes against the bundled binaries and schema.
 
 Before distribution, compare the executable with
-`Term-Sheet-Extractor-Employee-Setup.exe.sha256`. `server-url.txt` records the installation-specific
-server address; the launcher's distribution mechanism can deploy it beside the installed executable
-when retargeting is required. Do not copy `server.env`, `ProgramData\WinnerZone\TermSheet\config`, or
-any server secret to an employee computer.
+`Term-Sheet-Extractor-Employee-Setup.exe.sha256`. Keep `server-url.txt` beside the installer when
+running setup: the installer copies this installation-specific server address beside the installed
+executable automatically. IT can deploy the same file there later when retargeting is required. Do
+not copy `server.env`, `ProgramData\WinnerZone\TermSheet\config`, or any server secret to an employee
+computer.
 
 Local mode is intentionally separate from the company's book. It does not synchronize, cannot make
 central maker/checker approvals, and uses self-review labels. To move work into the company book,
@@ -559,8 +572,9 @@ Prisma-supported `prisma.config.*` or `.config\prisma.*` files under `C:\TermShe
 release supplies its own config, so do not copy the client-created file into new release directories.
 
 **The employee launcher opens the wrong hostname.** The compiled default can be overridden with
-`server-url.txt`. Confirm the generated file contains the correct HTTPS URL, then have the launcher
-distribution mechanism place that file beside the installed executable:
+`server-url.txt`. Confirm the generated file contains the correct HTTPS URL and that setup was run
+with that file beside the installer. Setup copies it beside the installed executable automatically;
+the launcher distribution mechanism can also place or replace it there later:
 
 ```powershell
 Get-Content -LiteralPath "C:\TermSheet\Client Files\server-url.txt" -Raw
