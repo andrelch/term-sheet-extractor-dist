@@ -48,18 +48,18 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 If elevation is declined, nothing is changed. Accept it later and restart Step 1; every installation
 and check below is safe to rerun.
 
-### Step 1.1: Install Node.js 22 x64
+### Step 1.1: Install Node.js 24 x64
 
 Node.js is needed only to verify and install the first release. Installed releases use their own
 bundled, tested `runtime\node.exe`. Do not install npm packages, Git, or the source repository on the
 server.
 
-On Windows Server 2025 with WinGet available, install the version-specific Node 22 package. Do not
+On Windows Server 2025 with WinGet available, install the version-specific Node 24 package. Do not
 use `OpenJS.NodeJS.LTS`, because that package moves to a new major when the active LTS line changes.
 
 ```powershell
 winget source update
-winget install --id OpenJS.NodeJS.22 --exact --source winget --architecture x64 --scope machine `
+winget install --id OpenJS.NodeJS.24 --exact --source winget --architecture x64 --scope machine `
   --accept-source-agreements --accept-package-agreements
 
 # Refresh PATH in this PowerShell window, then verify both version and architecture.
@@ -69,14 +69,14 @@ node.exe --version
 node.exe -p "process.arch"
 ```
 
-The version must start with `v22.` and the architecture must be `x64`. If `winget.exe` is not
-available (for example, on Windows Server 2022), download the **Windows x64 MSI for Node.js 22** from
+The version must be `v24.` or newer and the architecture must be `x64`. If `winget.exe` is not
+available (for example, on Windows Server 2022), download the **Windows x64 MSI for Node.js 24** from
 the [official Node.js download page](https://nodejs.org/en/download), run the MSI as administrator,
 accept the default machine-wide PATH option, open a new elevated PowerShell window, and run the two
 verification commands above.
 
-If WinGet says Node.js 22 is already installed, do not uninstall it: refresh `PATH` and run the two
-checks again. If either check is still wrong, repair the existing Node.js 22 x64 installation from
+If WinGet says Node.js 24 is already installed, do not uninstall it: refresh `PATH` and run the two
+checks again. If either check is still wrong, repair the existing Node.js 24 x64 installation from
 Windows Installed Apps, then rerun Step 1.1.
 
 ### Step 1.2: Install and configure PostgreSQL 18 x64
@@ -132,12 +132,78 @@ startup, loopback binding, and ownership of pre-existing application objects in 
 
 Install [NSSM](https://nssm.cc/) and [Caddy](https://caddyserver.com/) from packages approved by your
 organization. Put their x64 executables at the following paths, or substitute the approved absolute
-paths in every later command:
+paths in every later command. On a fresh server, the following elevated PowerShell installs the
+modern-Windows-compatible NSSM 2.24-101 x64 build and the latest stable Caddy x64 build. It verifies
+the NSSM digest published on its download page and Caddy's release-specific SHA-256 checksum before
+copying either executable. These commands replace only `C:\tools\nssm.exe` and
+`C:\tools\caddy.exe`; if this server already has services using those files, use your organization's
+controlled upgrade process instead.
+
+```powershell
+$toolsRoot = "C:\tools"
+$downloadRoot = Join-Path ([IO.Path]::GetTempPath()) `
+  ("term-sheet-prerequisites-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path $toolsRoot, $downloadRoot -Force | Out-Null
+
+# NSSM 2.24-101 x64. Do not use the older 2.24 build on modern Windows Server.
+$nssmVersion = "2.24-101-g897c7ad"
+$nssmArchive = Join-Path $downloadRoot "nssm-$nssmVersion.zip"
+Invoke-WebRequest -Uri "https://nssm.cc/ci/nssm-$nssmVersion.zip" `
+  -OutFile $nssmArchive -UseBasicParsing -ErrorAction Stop
+$expectedNssmSha1 = "ca2f6782a05af85facf9b620e047b01271edd11d"
+$actualNssmSha1 = (Get-FileHash -LiteralPath $nssmArchive -Algorithm SHA1).Hash.ToLowerInvariant()
+if ($actualNssmSha1 -ne $expectedNssmSha1) {
+  throw "NSSM archive checksum mismatch; do not install it."
+}
+$nssmExtract = Join-Path $downloadRoot "nssm"
+Expand-Archive -LiteralPath $nssmArchive -DestinationPath $nssmExtract -ErrorAction Stop
+Copy-Item -LiteralPath (Join-Path $nssmExtract "nssm-$nssmVersion\win64\nssm.exe") `
+  -Destination (Join-Path $toolsRoot "nssm.exe") -Force
+
+# Latest stable Caddy x64, verified against its GitHub release checksums file.
+$caddyRelease = Invoke-RestMethod `
+  -Uri "https://api.github.com/repos/caddyserver/caddy/releases/latest" -ErrorAction Stop
+$caddyVersion = $caddyRelease.tag_name.TrimStart("v")
+$caddyAssetName = "caddy_${caddyVersion}_windows_amd64.zip"
+$caddyAsset = $caddyRelease.assets |
+  Where-Object name -eq $caddyAssetName | Select-Object -First 1
+$caddyChecksums = $caddyRelease.assets |
+  Where-Object name -eq "caddy_${caddyVersion}_checksums.txt" | Select-Object -First 1
+if (-not $caddyAsset -or -not $caddyChecksums) {
+  throw "The latest Caddy release does not contain the expected Windows x64 assets."
+}
+$caddyArchive = Join-Path $downloadRoot $caddyAssetName
+$caddyChecksumsPath = Join-Path $downloadRoot $caddyChecksums.name
+Invoke-WebRequest -Uri $caddyAsset.browser_download_url `
+  -OutFile $caddyArchive -UseBasicParsing -ErrorAction Stop
+Invoke-WebRequest -Uri $caddyChecksums.browser_download_url `
+  -OutFile $caddyChecksumsPath -UseBasicParsing -ErrorAction Stop
+$checksumLine = Get-Content -LiteralPath $caddyChecksumsPath |
+  Where-Object { $_ -match "\s+$([regex]::Escape($caddyAssetName))$" } |
+  Select-Object -First 1
+if (-not $checksumLine) { throw "Caddy checksum entry was not found." }
+$expectedCaddySha256 = ($checksumLine -split "\s+")[0].ToLowerInvariant()
+$actualCaddySha256 = (Get-FileHash -LiteralPath $caddyArchive -Algorithm SHA256).Hash.ToLowerInvariant()
+if ($actualCaddySha256 -ne $expectedCaddySha256) {
+  throw "Caddy archive checksum mismatch; do not install it."
+}
+$caddyExtract = Join-Path $downloadRoot "caddy"
+Expand-Archive -LiteralPath $caddyArchive -DestinationPath $caddyExtract -ErrorAction Stop
+Copy-Item -LiteralPath (Join-Path $caddyExtract "caddy.exe") `
+  -Destination (Join-Path $toolsRoot "caddy.exe") -Force
+
+Unblock-File C:\tools\nssm.exe, C:\tools\caddy.exe
+```
+
+NSSM 2.24 prints a plausible version inside its error/usage banner but exits with code 1 and fails
+Steps 4 and 7. The supported build must return exit code 0 for `version`. Verify both installations:
 
 ```powershell
 Get-Item C:\tools\nssm.exe, C:\tools\caddy.exe
 & C:\tools\nssm.exe version
+if ($LASTEXITCODE -ne 0) { throw "NSSM version check failed." }
 & C:\tools\caddy.exe version
+if ($LASTEXITCODE -ne 0) { throw "Caddy version check failed." }
 ```
 
 By default, use the currently signed-in Windows account and retain its credential in this PowerShell
@@ -178,13 +244,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.8/term-sheet-bootstrap-0.2.9.8.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.8/term-sheet-bootstrap-0.2.9.8.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.9.8-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.8.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.10/term-sheet-bootstrap-0.2.9.10.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.10/term-sheet-bootstrap-0.2.9.10.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.9.10-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.10.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.8"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.10"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connectivity.ps1"))) {
   for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -274,7 +340,7 @@ Fix everything reported before continuing — each one will surface again, less 
 install or first update.
 
 The JSON result includes a `remediation` for every failed check. With `-OfferRemediation`, the script
-also prints those actions and can install the pinned Node.js 22 x64 package after confirmation when
+also prints those actions and can install the pinned Node.js 24 x64 package after confirmation when
 WinGet is present. Network, tool-path, and Windows-component repairs are proposed without changing
 company policy. A missing key can be repaired by re-extracting a clean package; a fingerprint
 mismatch is never bypassed and must be escalated to the vendor. Fix the listed items and rerun the
@@ -313,9 +379,11 @@ password or writes a temporary password file.
 The helper safely handles fresh installs, reruns, existing roles, and legacy or third-party database
 owners. Empty, mismatched, or rejected passwords prompt again with a specific recovery action.
 For a PostgreSQL owner created with `NOLOGIN`, the authenticated `postgres` administrator must type `TRANSFER` explicitly before ownership changes.
-The bootstrap preserves an existing configuration and authentication secret on every rerun. It also
-rejects a populated `DOCUMENT_STORE_MASTER_KEY`, because the central key belongs in DPAPI or Azure
-Key Vault rather than in an environment file.
+On every rerun, the bootstrap reconciles database grants and ownership before Prisma migrations and
+refreshes the managed local `DATABASE_URL` with the verified application-role credential. It
+preserves the existing authentication secret and other operator configuration. It also rejects a
+populated `DOCUMENT_STORE_MASTER_KEY`, because the central key belongs in DPAPI or Azure Key Vault
+rather than in an environment file.
 
 Provider API keys deliberately remain blank. After installation, use the localhost server launcher,
 choose **Developer access**, and enter approved keys under **Settings -> API keys**. The default
@@ -424,14 +492,20 @@ What each required flag is:
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
 | `-ReleasePublicKeyPath` | The key from [Step 3](#step-3-confirm-you-have-the-right-key). |
 
-It's safe to run more than once. If a release is already installed, it leaves it alone and reports
-that. It refuses to trust a different signing key on a rerun — if you need to install a new key,
-that's a separate, deliberate procedure the vendor will walk you through, not something this script
-does implicitly.
+It's safe to run more than once. A complete release at the channel version is left in place. If an
+older release was left behind by a bootstrap that stopped before creating the server-key marker or
+any Term Sheet service, the rerun installs the newer verified release and repoints only `current`;
+the old versioned release directory remains preserved. If a key marker or service exists, bootstrap
+refuses to replace the release and directs the operator to the signed updater or recovery procedure.
+It also refuses to trust a different signing key on a rerun — key rotation is a separate,
+deliberate procedure the vendor will walk you through.
 
 If bootstrap stops, keep its error message, apply the specific fix it proposes, and rerun the same
 Step 7 command. It resumes from verified state and recreates missing services or launcher files; do
 not delete `C:\TermSheet`, the data directory, or `%ProgramData%\WinnerZone\TermSheet` to retry.
+The updater stage is transaction-safe and is attempted up to three times before bootstrap stops.
+Each attempt verifies both enabled scheduled tasks and a readable versioned state file, so a transient
+ACL or Task Scheduler failure cannot be mistaken for a completed installation.
 
 When the two public certificates become available, add escrow to the existing key from an elevated
 PowerShell session. This command does not rotate the key or rewrite encrypted documents:
