@@ -107,6 +107,19 @@ If PostgreSQL 18 is already present, keep it and continue; the Step 7 bootstrap 
 repairs the existing cluster. If the installer reports an incomplete installation, use its Repair option,
 confirm `C:\Program Files\PostgreSQL\18\bin\psql.exe` exists, then rerun this step.
 
+The default server configuration relies on BitLocker for document files stored under
+`C:\TermSheetData`. Before continuing, enable BitLocker on `C:`, escrow its recovery key outside this
+server through the organization's approved process, wait for encryption to reach 100%, and verify:
+
+```powershell
+$volume = Get-BitLockerVolume -MountPoint C:
+$volume | Format-List MountPoint,VolumeStatus,ProtectionStatus,EncryptionPercentage
+if ($volume.VolumeStatus -ne "FullyEncrypted" -or $volume.ProtectionStatus -ne "On" -or
+    $volume.EncryptionPercentage -ne 100) {
+  throw "C: must be fully encrypted and protected before Step 7."
+}
+```
+
 Database configuration happens with the verified `configure-postgresql18.ps1` helper during
 Step 7. Do not manually create roles or a database here. The helper handles fresh installations,
 safe reruns, existing login or non-login roles, forgotten application-role passwords, a database
@@ -128,11 +141,11 @@ Get-Item C:\tools\nssm.exe, C:\tools\caddy.exe
 ```
 
 By default, use the currently signed-in Windows account and retain its credential in this PowerShell
-session. `COMPUTERNAME\USERNAME` is intentional and avoids asking the client to create another local
-account solely for setup:
+session. Reading the identity from Windows works for both local and domain sign-ins and avoids asking
+the client to create another account solely for setup:
 
 ```powershell
-$serviceUser = "$env:COMPUTERNAME\$env:USERNAME"
+$serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 do {
   try {
     $serviceAccount = New-Object Security.Principal.NTAccount($serviceUser)
@@ -165,13 +178,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.6/term-sheet-bootstrap-0.2.9.6.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.6/term-sheet-bootstrap-0.2.9.6.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.9.6-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.6.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.8/term-sheet-bootstrap-0.2.9.8.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.8/term-sheet-bootstrap-0.2.9.8.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.9.8-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.8.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.6"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.8"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connectivity.ps1"))) {
   for ($attempt = 1; $attempt -le 3; $attempt++) {
@@ -197,14 +210,19 @@ if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connect
   }
 }
 Set-Location $packageDirectory
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+Get-ChildItem -LiteralPath $packageDirectory -Recurse -File | Unblock-File
 Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, `
   .\configure-postgresql18.ps1, .\bootstrap-windows-server.ps1
 Get-ChildItem .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe, `
   .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe.sha256
 ```
 
-The commands must list all four scripts plus one employee installer and its checksum. Run every
-remaining command from that extracted package directory.
+The process-scoped execution policy applies only to this PowerShell window; it does not change the
+computer or user policy. `Unblock-File` removes the downloaded-file marker from the already
+checksum-verified extracted copy. The commands must then list all four scripts plus one employee
+installer and its checksum. Run every remaining command from that extracted package directory and
+the same elevated PowerShell window.
 
 ## Step 3: Confirm you have the right key
 
@@ -248,6 +266,9 @@ $expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8f
 | Node.js available | Node isn't installed, isn't on the expected path, is older than version 22, or isn't the x64 build. |
 | System tar.exe available | Windows' built-in `tar.exe` (System32) is missing or shadowed by another `tar` on PATH. |
 | NSSM / Caddy present | The path you gave doesn't point at a real file. |
+| Elevated PowerShell | Step 7 needs an administrator window to configure services, ACLs, firewall rules, and scheduled tasks. |
+| PostgreSQL 18 tools / service | The PostgreSQL server or required `psql`, `pg_dump`, and `pg_restore` tools are missing or the wrong major version. |
+| Data volume BitLocker | `C:\TermSheetData` would be stored on a volume that is not yet fully encrypted and protected. Enable BitLocker and escrow its recovery key before Step 7. |
 
 Fix everything reported before continuing — each one will surface again, less clearly, during actual
 install or first update.
@@ -303,12 +324,36 @@ provider configuration therefore require no Notepad session and no direct access
 
 ## Step 7: Install
 
-From an elevated PowerShell session, in this package's directory, run the command below. On a fresh
+From an elevated PowerShell session, in this package's directory, run one complete block below. Each
+block obtains the identity and credential again, so it also works in a newly elevated window. On a fresh
 installation it calls the packaged PostgreSQL helper and prompts for the necessary database
 passwords before downloading the release. It then creates the protected server configuration
 automatically; do not create or edit `server.env` first.
 
+With two-custodian escrow:
+
+Before running this block, copy the two custodians' distinct public `.cer` files to the exact paths
+shown (or replace both paths in the command). The private keys remain with the custodians.
+
 ```powershell
+$servicePolicy = Get-ExecutionPolicy -Scope Process
+if ($servicePolicy -ne "Bypass") { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force }
+Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
+
+$serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+do {
+  try {
+    $serviceSid = (New-Object Security.Principal.NTAccount($serviceUser)).Translate([Security.Principal.SecurityIdentifier]).Value
+    $serviceCredential = Get-Credential -UserName $serviceUser `
+      -Message "Log in to the Windows account that will run the Term Sheet services"
+    if (-not $serviceCredential) { Write-Warning "No credential was entered." }
+  } catch {
+    Write-Warning "'$serviceUser' did not resolve: $($_.Exception.Message)"
+    $serviceUser = Read-Host "Enter COMPUTERNAME\username or DOMAIN\username, or press Enter to stop"
+    if (-not $serviceUser) { return }
+  }
+} until ($serviceSid -and $serviceCredential)
+
 do {
   $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter to use localhost on this server only"
   if (-not $publicHostname) { $publicHostname = "localhost" }
@@ -328,6 +373,31 @@ If no custodians have been appointed, the client may formally accept the tempora
 and omit both escrow arguments by using `-AllowDeferredEscrow`:
 
 ```powershell
+$servicePolicy = Get-ExecutionPolicy -Scope Process
+if ($servicePolicy -ne "Bypass") { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force }
+Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
+
+$serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+do {
+  try {
+    $serviceSid = (New-Object Security.Principal.NTAccount($serviceUser)).Translate([Security.Principal.SecurityIdentifier]).Value
+    $serviceCredential = Get-Credential -UserName $serviceUser `
+      -Message "Log in to the Windows account that will run the Term Sheet services"
+    if (-not $serviceCredential) { Write-Warning "No credential was entered." }
+  } catch {
+    Write-Warning "'$serviceUser' did not resolve: $($_.Exception.Message)"
+    $serviceUser = Read-Host "Enter COMPUTERNAME\username or DOMAIN\username, or press Enter to stop"
+    if (-not $serviceUser) { return }
+  }
+} until ($serviceSid -and $serviceCredential)
+
+do {
+  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter to use localhost on this server only"
+  if (-not $publicHostname) { $publicHostname = "localhost" }
+  $hostnameIsValid = $publicHostname -match '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -and -not $publicHostname.Contains('..')
+  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for localhost." }
+} until ($hostnameIsValid)
+
 .\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
   -PublicHostname $publicHostname `
@@ -348,7 +418,7 @@ What each required flag is:
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
 | `-PublicHostname` | Defaults to `localhost`, which supports using the UI on the server computer. Supply a DNS hostname when employee computers must connect over the network. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
-| `-ServiceUser` | The low-privilege Windows account the application services run as. Not an administrator account — the bootstrap deliberately restricts what this account can touch. |
+| `-ServiceUser` | The Windows account the application services run as. These blocks default to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
 | `-AllowDeferredEscrow` | Explicitly installs without recovery packages when custodians do not yet exist. It cannot be combined with either escrow argument and must be treated as a temporary, approved data-loss risk. |
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
@@ -388,33 +458,38 @@ Four Windows services, all managed by NSSM, all set to restart automatically:
 | `TermSheetBackup` | Scheduled database/document backups |
 
 Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
-errors). Confirm all four services are running, the updater wrote its initial state, and the
-launcher handoff exists. The repair helper reports all problems, offers safe starts, and proposes
-an idempotent bootstrap rerun for missing components. For ordinary version checks, use
-**Settings → System → Server version and updates**; the commands below are the recovery fallback:
+errors). From the same verified package directory and an elevated PowerShell window, run this entire
+block. It avoids cascading command errors when a component is absent and does not report success
+unless every required check passes:
 
 ```powershell
-.\repair-windows-server.ps1
-
-$stateFile = Join-Path $env:ProgramData "WinnerZone\TermSheet\updater-state.json"
-if (Test-Path -LiteralPath $stateFile) { Get-Content -LiteralPath $stateFile -Raw | ConvertFrom-Json }
-
-Get-NetTCPConnection -State Listen | Where-Object LocalPort -In 443, 3000, 5432 |
-  Format-Table LocalAddress, LocalPort, OwningProcess
-
-$clientFilesRoot = "C:\TermSheet\Client Files"
-Get-ChildItem -LiteralPath $clientFilesRoot
-Get-Content -LiteralPath (Join-Path $clientFilesRoot "server-url.txt") -Raw
-Get-FileHash -Algorithm SHA256 `
-  -LiteralPath (Join-Path $clientFilesRoot "Term-Sheet-Extractor-Employee-Setup.exe")
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
+Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
+.\repair-windows-server.ps1 -AcceptSafeRepairs
+if ($LASTEXITCODE -ne 0) {
+  Write-Warning "Step 8 found a problem. Apply every recovery action printed above, then rerun this block."
+  return
+}
+Write-Host "Step 8 server checks passed."
 ```
 
-Port `443` is the HTTPS entry point. Ports `3000` and `5432` must listen only on loopback, never on a
-LAN address. The client-files listing must include `Term-Sheet-Extractor-Employee-Setup.exe`, its
-`.sha256` file, `server-url.txt`, `Term Sheet Extractor - Server.url`, `README.txt`, and
-`Term-Sheet-Client-Files.zip`. The hash must match the `.sha256` file and `server-url.txt` must match
-the `$publicHostname` supplied in Step 7. If anything looks wrong, inspect the corresponding
-`.err.log` first.
+The helper checks elevation; the PostgreSQL and four application services and their automatic-start
+configuration; both scheduled updater tasks; updater JSON and active-release version agreement;
+ports `443`, `3000`, and `5432`; loopback-only binding for internal ports; web readiness; the worker
+heartbeat; logs; both installed server shortcuts; and every employee handoff file. It also validates
+the employee installer checksum, server URL, shortcut target, and the complete ZIP contents. Brief
+retries cover ordinary service startup timing. The command automatically restores automatic startup,
+starts stopped services, enables scheduled tasks, runs the updater when its state is missing, and
+restores user shortcuts. If a required port, web readiness check, or worker heartbeat is unhealthy,
+it restarts the responsible service once and verifies it again. It never silently rebuilds or replaces
+missing application or customer data.
+The audited `Client Files` set is `Term-Sheet-Extractor-Employee-Setup.exe`, its `.sha256` file,
+`Term Sheet Extractor - Server.url`, `server-url.txt`, `README.txt`, and
+`Term-Sheet-Client-Files.zip`.
+
+For ordinary version checks after Step 8 passes, use **Settings → System → Server version and
+updates**. If the helper reports a problem, follow its exact recovery action and inspect the named
+`.err.log`; do not continue to owner setup until the helper exits successfully.
 
 The bootstrap has already installed `Term Sheet Extractor - Server` on the current Windows user's
 Desktop and Start menu. Open it now and confirm the sign-in page loads. This is the supported way to
