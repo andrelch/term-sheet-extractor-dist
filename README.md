@@ -135,15 +135,19 @@ organization. Put their x64 executables at the following paths, or substitute th
 paths in every later command. On a fresh server, the following elevated PowerShell installs the
 modern-Windows-compatible NSSM 2.24-101 x64 build and the latest stable Caddy x64 build. It verifies
 the NSSM digest published on its download page and Caddy's release-specific SHA-256 checksum before
-copying either executable. These commands replace only `C:\tools\nssm.exe` and
-`C:\tools\caddy.exe`; if this server already has services using those files, use your organization's
-controlled upgrade process instead.
+copying either executable. The block always downloads fresh archives. On an existing installation it
+stops every service whose executable path uses this NSSM copy, replaces both tools, and restarts only
+the services that were running beforehand. Expect a brief application outage while the files are
+replaced. If other applications share `C:\tools\nssm.exe`, schedule the command in an approved
+maintenance window because those services are restarted too.
 
 ```powershell
 $toolsRoot = "C:\tools"
 $downloadRoot = Join-Path ([IO.Path]::GetTempPath()) `
   ("term-sheet-prerequisites-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Path $toolsRoot, $downloadRoot -Force | Out-Null
+$nssmDestination = Join-Path $toolsRoot "nssm.exe"
+$caddyDestination = Join-Path $toolsRoot "caddy.exe"
 
 # NSSM 2.24-101 x64. Do not use the older 2.24 build on modern Windows Server.
 $nssmVersion = "2.24-101-g897c7ad"
@@ -157,8 +161,7 @@ if ($actualNssmSha1 -ne $expectedNssmSha1) {
 }
 $nssmExtract = Join-Path $downloadRoot "nssm"
 Expand-Archive -LiteralPath $nssmArchive -DestinationPath $nssmExtract -ErrorAction Stop
-Copy-Item -LiteralPath (Join-Path $nssmExtract "nssm-$nssmVersion\win64\nssm.exe") `
-  -Destination (Join-Path $toolsRoot "nssm.exe") -Force
+$newNssm = Join-Path $nssmExtract "nssm-$nssmVersion\win64\nssm.exe"
 
 # Latest stable Caddy x64, verified against its GitHub release checksums file.
 $caddyRelease = Invoke-RestMethod `
@@ -189,10 +192,43 @@ if ($actualCaddySha256 -ne $expectedCaddySha256) {
 }
 $caddyExtract = Join-Path $downloadRoot "caddy"
 Expand-Archive -LiteralPath $caddyArchive -DestinationPath $caddyExtract -ErrorAction Stop
-Copy-Item -LiteralPath (Join-Path $caddyExtract "caddy.exe") `
-  -Destination (Join-Path $toolsRoot "caddy.exe") -Force
+$newCaddy = Join-Path $caddyExtract "caddy.exe"
 
-Unblock-File C:\tools\nssm.exe, C:\tools\caddy.exe
+# Windows locks an NSSM executable while any service hosted by that copy is running.
+# Download and verify everything first, then keep the service outage as short as possible.
+$escapedNssmPath = [regex]::Escape([IO.Path]::GetFullPath($nssmDestination))
+$affectedServices = @(
+  Get-CimInstance Win32_Service -ErrorAction Stop |
+    Where-Object { $_.PathName -match "(?i)$escapedNssmPath(?:`"|\s|$)" }
+)
+$servicesToRestart = @($affectedServices | Where-Object State -eq "Running")
+
+try {
+  foreach ($service in $servicesToRestart) {
+    Write-Host "Stopping $($service.Name) so the prerequisite executables can be replaced..."
+    Stop-Service -Name $service.Name -Force -ErrorAction Stop
+  }
+  foreach ($service in $servicesToRestart) {
+    (Get-Service -Name $service.Name -ErrorAction Stop).WaitForStatus(
+      [System.ServiceProcess.ServiceControllerStatus]::Stopped,
+      [TimeSpan]::FromSeconds(60)
+    )
+  }
+
+  Copy-Item -LiteralPath $newNssm -Destination $nssmDestination -Force -ErrorAction Stop
+  Copy-Item -LiteralPath $newCaddy -Destination $caddyDestination -Force -ErrorAction Stop
+  Unblock-File $nssmDestination, $caddyDestination -ErrorAction Stop
+}
+finally {
+  foreach ($service in $servicesToRestart) {
+    if ((Get-Service -Name $service.Name -ErrorAction SilentlyContinue).Status -ne "Running") {
+      Write-Host "Restarting $($service.Name)..."
+      Start-Service -Name $service.Name -ErrorAction Continue
+    }
+  }
+}
+
+Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
 NSSM 2.24 prints a plausible version inside its error/usage banner but exits with code 1 and fails
@@ -244,35 +280,33 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.10/term-sheet-bootstrap-0.2.9.10.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.2.9.10/term-sheet-bootstrap-0.2.9.10.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.2.9.10-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.10.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.0/term-sheet-bootstrap-0.3.0.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.0/term-sheet-bootstrap-0.3.0.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.0-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.0.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.2.9.10"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.0"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
-if (-not (Test-Path -LiteralPath (Join-Path $packageDirectory "preflight-connectivity.ps1"))) {
-  for ($attempt = 1; $attempt -le 3; $attempt++) {
-    try {
-      Invoke-WebRequest -Uri $bootstrapUrl -OutFile "$bootstrapZip.part" -UseBasicParsing -ErrorAction Stop
-      Move-Item -LiteralPath "$bootstrapZip.part" -Destination $bootstrapZip -Force
-      Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing -ErrorAction Stop
-      $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-      $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
-      if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch; the download will not be used." }
-      $stagingDirectory = "$packageDirectory.extracting"
-      if (Test-Path -LiteralPath $stagingDirectory) { Remove-Item -LiteralPath $stagingDirectory -Recurse -Force }
-      Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $stagingDirectory -ErrorAction Stop
-      if (Test-Path -LiteralPath $packageDirectory) { $packageDirectory = "$packageDirectory-$(Get-Date -Format yyyyMMddHHmmss)" }
-      Move-Item -LiteralPath $stagingDirectory -Destination $packageDirectory
-      break
-    } catch {
-      Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
-      Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
-      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Step 2." }
-      Read-Host "Correct the reported problem, then press Enter to retry"
-    }
+for ($attempt = 1; $attempt -le 3; $attempt++) {
+  try {
+    Invoke-WebRequest -Uri $bootstrapUrl -OutFile "$bootstrapZip.part" -UseBasicParsing -ErrorAction Stop
+    Move-Item -LiteralPath "$bootstrapZip.part" -Destination $bootstrapZip -Force
+    Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing -ErrorAction Stop
+    $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+    $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch; the download will not be used." }
+    $stagingDirectory = "$packageDirectory.extracting"
+    if (Test-Path -LiteralPath $stagingDirectory) { Remove-Item -LiteralPath $stagingDirectory -Recurse -Force }
+    Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $stagingDirectory -ErrorAction Stop
+    if (Test-Path -LiteralPath $packageDirectory) { Remove-Item -LiteralPath $packageDirectory -Recurse -Force -ErrorAction Stop }
+    Move-Item -LiteralPath $stagingDirectory -Destination $packageDirectory -ErrorAction Stop
+    break
+  } catch {
+    Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
+    Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
+    if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Step 2." }
+    Read-Host "Correct the reported problem, then press Enter to retry"
   }
 }
 Set-Location $packageDirectory
@@ -492,13 +526,16 @@ What each required flag is:
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
 | `-ReleasePublicKeyPath` | The key from [Step 3](#step-3-confirm-you-have-the-right-key). |
 
-It's safe to run more than once. A complete release at the channel version is left in place. If an
-older release was left behind by a bootstrap that stopped before creating the server-key marker or
-any Term Sheet service, the rerun installs the newer verified release and repoints only `current`;
-the old versioned release directory remains preserved. If a key marker or service exists, bootstrap
-refuses to replace the release and directs the operator to the signed updater or recovery procedure.
-It also refuses to trust a different signing key on a rerun — key rotation is a separate,
-deliberate procedure the vendor will walk you through.
+It's safe to run more than once, including from a newly downloaded bootstrap package. A complete
+release at the channel version is left in place. If an older release was left behind by a bootstrap
+that stopped before creating the server-key marker or any Term Sheet service, the rerun installs the
+newer verified release and repoints only `current`; the old versioned release directory remains
+preserved. On an initialized server, bootstrap deliberately leaves the active release in place while
+it overwrites the external updater, service definitions, shortcuts, and employee handoff with the
+new package. The refreshed signed updater then downloads and activates the newer application release
+through its normal backup and health-check process. Existing data, secrets, configuration, signing
+trust, and rollback releases remain intact. Bootstrap refuses to trust a different signing key on a
+rerun — key rotation is a separate, deliberate procedure the vendor will walk you through.
 
 If bootstrap stops, keep its error message, apply the specific fix it proposes, and rerun the same
 Step 7 command. It resumes from verified state and recreates missing services or launcher files; do
@@ -506,6 +543,10 @@ not delete `C:\TermSheet`, the data directory, or `%ProgramData%\WinnerZone\Term
 The updater stage is transaction-safe and is attempted up to three times before bootstrap stops.
 Each attempt verifies both enabled scheduled tasks and a readable versioned state file, so a transient
 ACL or Task Scheduler failure cannot be mistaken for a completed installation.
+After services and launchers are ready, Step 7 starts both tasks under their installed `SYSTEM`
+identity. It waits for a successful fresh channel check (and any offered signed update), verifies the
+task exit results and updater state, then checks server readiness again. A large first update can keep
+Step 7 open while it downloads, backs up, and validates the release; do not close that window.
 
 When the two public certificates become available, add escrow to the existing key from an elevated
 PowerShell session. This command does not rotate the key or rewrite encrypted documents:
@@ -565,8 +606,9 @@ For ordinary version checks after Step 8 passes, use **Settings → System → S
 updates**. If the helper reports a problem, follow its exact recovery action and inspect the named
 `.err.log`; do not continue to owner setup until the helper exits successfully.
 
-The bootstrap has already installed `Term Sheet Extractor - Server` on the current Windows user's
-Desktop and Start menu. Open it now and confirm the sign-in page loads. This is the supported way to
+The bootstrap has already installed `Term Sheet Extractor - Server` in the current and all-users
+Desktop and Start menu locations, so it remains visible even when Step 7 ran elevated. Open it now
+and confirm the sign-in page loads. This is the supported way to
 launch the UI directly from the server computer, including a localhost-only installation.
 
 On that localhost sign-in page, choose **Developer access**. This provisions and signs in the sole
@@ -697,6 +739,46 @@ if (Test-Path -LiteralPath $localLauncher) { Start-Process $localLauncher }
 If PostgreSQL 18 is missing, reinstall PostgreSQL 18 and rerun Step 7. If a Term Sheet
 service, updater task, or launcher file is missing, rerun Step 7 with the same values. Bootstrap
 preserves the pinned signing key, installed release, data, and existing authentication secret.
+
+### Stopping the server for NSSM or tool maintenance
+
+An idle `TermSheetBackup` does not imply a backup is running. Older installations gave its
+PowerShell wrapper a 30-minute NSSM console-stop timeout, which can leave the service in
+`STOP_PENDING` while it prints output. Current releases handle NSSM's Windows `CTRL+BREAK` signal
+directly so idle processes exit promptly, and current Step 7 also reduces the forced-stop fallback
+to one minute. To stop all NSSM-hosted Term Sheet services and prevent the updater from restarting
+them, use elevated PowerShell:
+
+```powershell
+$taskNames = "WinnerZone Term Sheet Updater", "WinnerZone Term Sheet Rollback Processor"
+foreach ($taskName in $taskNames) {
+  Disable-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue | Out-Null
+  Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+}
+
+$serviceNames = "TermSheetBackup", "TermSheetWorker", "TermSheetWeb", "TermSheetProxy"
+foreach ($serviceName in $serviceNames) { sc.exe stop $serviceName | Out-Null }
+$deadline = (Get-Date).AddSeconds(90)
+do {
+  $remaining = @(Get-Service -Name $serviceNames -ErrorAction SilentlyContinue |
+    Where-Object Status -ne "Stopped")
+  if (-not $remaining.Count) { break }
+  Start-Sleep -Seconds 3
+} while ((Get-Date) -lt $deadline)
+
+# Only the Term Sheet NSSM service trees still stuck after the graceful request are terminated.
+foreach ($service in $remaining) {
+  $serviceProcess = Get-CimInstance Win32_Service -Filter "Name='$($service.Name)'"
+  if ($serviceProcess.ProcessId -gt 0) {
+    taskkill.exe /PID $serviceProcess.ProcessId /T /F | Out-Null
+  }
+}
+Get-Service -Name $serviceNames
+```
+
+All four must show `Stopped` before replacing `C:\tools\nssm.exe`. PostgreSQL is deliberately not
+stopped. After maintenance, rerun Step 7 (preferred, because it reapplies current service settings),
+or start the four services and re-enable both scheduled tasks.
 
 If the browser does not load, confirm the application answers on loopback before debugging DNS or
 certificates:
