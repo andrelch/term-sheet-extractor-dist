@@ -280,13 +280,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.0/term-sheet-bootstrap-0.3.0.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.0/term-sheet-bootstrap-0.3.0.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.0-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.0.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.4/term-sheet-bootstrap-0.3.4.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.4/term-sheet-bootstrap-0.3.4.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.4-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.4.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.0"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.4"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 for ($attempt = 1; $attempt -le 3; $attempt++) {
   try {
@@ -407,7 +407,8 @@ verified `configure-postgresql18.ps1` helper, prompts securely for the PostgreSQ
 application-role passwords it needs, and receives the application password as a `SecureString`.
 It then creates `%ProgramData%\WinnerZone\TermSheet\config\server.env` from the packaged baseline
 and fills in the escaped `DATABASE_URL`, a new 48-byte `AUTH_SECRET`, `C:\TermSheetData\objects`,
-the selected DPAPI or Key Vault provider, and local installation-owner access. It never prints a
+`APP_MODE=dual`, the selected DPAPI or Key Vault provider, and local installation-owner access. The
+local workspace door is accepted only over loopback. It never prints a
 password or writes a temporary password file.
 
 The helper safely handles fresh installs, reruns, existing roles, and legacy or third-party database
@@ -457,10 +458,10 @@ do {
 } until ($serviceSid -and $serviceCredential)
 
 do {
-  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter to use localhost on this server only"
-  if (-not $publicHostname) { $publicHostname = "localhost" }
+  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter for termsheetextractor.local"
+  if (-not $publicHostname) { $publicHostname = "termsheetextractor.local" }
   $hostnameIsValid = $publicHostname -match '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -and -not $publicHostname.Contains('..')
-  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for localhost." }
+  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for termsheetextractor.local." }
 } until ($hostnameIsValid)
 
 .\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
@@ -494,10 +495,10 @@ do {
 } until ($serviceSid -and $serviceCredential)
 
 do {
-  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter to use localhost on this server only"
-  if (-not $publicHostname) { $publicHostname = "localhost" }
+  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter for termsheetextractor.local"
+  if (-not $publicHostname) { $publicHostname = "termsheetextractor.local" }
   $hostnameIsValid = $publicHostname -match '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -and -not $publicHostname.Contains('..')
-  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for localhost." }
+  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for termsheetextractor.local." }
 } until ($hostnameIsValid)
 
 .\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
@@ -518,7 +519,7 @@ What each required flag is:
 | --- | --- |
 | `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
-| `-PublicHostname` | Defaults to `localhost`, which supports using the UI on the server computer. Supply a DNS hostname when employee computers must connect over the network. Caddy also keeps `https://localhost/` available for the server-console launcher. |
+| `-PublicHostname` | Defaults to `termsheetextractor.local`. Internal DNS or mDNS must resolve it to the server's LAN IP for employee computers. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
 | `-ServiceUser` | The Windows account the application services run as. These blocks default to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
