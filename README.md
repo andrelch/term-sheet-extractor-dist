@@ -134,7 +134,7 @@ Install [NSSM](https://nssm.cc/) and [Caddy](https://caddyserver.com/) from pack
 organization. Put their x64 executables at the following paths, or substitute the approved absolute
 paths in every later command. On a fresh server, the following elevated PowerShell installs the
 modern-Windows-compatible NSSM 2.24-101 x64 build and the latest stable Caddy x64 build. It verifies
-the NSSM digest published on its download page and Caddy's release-specific SHA-256 checksum before
+the NSSM digest published on its download page and Caddy's release-specific SHA-512 checksum before
 copying either executable. The block always downloads fresh archives. On an existing installation it
 stops every service whose executable path uses this NSSM copy, replaces both tools, and restarts only
 the services that were running beforehand. Expect a brief application outage while the files are
@@ -182,12 +182,12 @@ Invoke-WebRequest -Uri $caddyAsset.browser_download_url `
 Invoke-WebRequest -Uri $caddyChecksums.browser_download_url `
   -OutFile $caddyChecksumsPath -UseBasicParsing -ErrorAction Stop
 $checksumLine = Get-Content -LiteralPath $caddyChecksumsPath |
-  Where-Object { $_ -match "\s+$([regex]::Escape($caddyAssetName))$" } |
+  Where-Object { $_ -match "^[0-9a-fA-F]{128}\s+\*?$([regex]::Escape($caddyAssetName))$" } |
   Select-Object -First 1
-if (-not $checksumLine) { throw "Caddy checksum entry was not found." }
-$expectedCaddySha256 = ($checksumLine -split "\s+")[0].ToLowerInvariant()
-$actualCaddySha256 = (Get-FileHash -LiteralPath $caddyArchive -Algorithm SHA256).Hash.ToLowerInvariant()
-if ($actualCaddySha256 -ne $expectedCaddySha256) {
+if (-not $checksumLine) { throw "A valid SHA-512 entry for the Caddy archive was not found." }
+$expectedCaddySha512 = ($checksumLine -split "\s+")[0].ToLowerInvariant()
+$actualCaddySha512 = (Get-FileHash -LiteralPath $caddyArchive -Algorithm SHA512).Hash.ToLowerInvariant()
+if ($actualCaddySha512 -ne $expectedCaddySha512) {
   throw "Caddy archive checksum mismatch; do not install it."
 }
 $caddyExtract = Join-Path $downloadRoot "caddy"
@@ -280,13 +280,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.4/term-sheet-bootstrap-0.3.4.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.4/term-sheet-bootstrap-0.3.4.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.4-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.4.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.5/term-sheet-bootstrap-0.3.5.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.5/term-sheet-bootstrap-0.3.5.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.5-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.5.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.4"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.5"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 for ($attempt = 1; $attempt -le 3; $attempt++) {
   try {
@@ -519,7 +519,7 @@ What each required flag is:
 | --- | --- |
 | `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
-| `-PublicHostname` | Defaults to `termsheetextractor.local`. Internal DNS or mDNS must resolve it to the server's LAN IP for employee computers. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
+| `-PublicHostname` | Defaults to `termsheetextractor.local`. Step 7 puts the current LAN address in the employee installer; setup replaces older mappings for that hostname on each employee computer automatically. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
 | `-ServiceUser` | The Windows account the application services run as. These blocks default to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
@@ -527,14 +527,21 @@ What each required flag is:
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
 | `-ReleasePublicKeyPath` | The key from [Step 3](#step-3-confirm-you-have-the-right-key). |
 
-It's safe to run more than once, including from a newly downloaded bootstrap package. A complete
-release at the channel version is left in place. If an older release was left behind by a bootstrap
+It's safe to run more than once, including from a newly downloaded bootstrap package. Treat a newer
+bootstrap as an authoritative maintenance installation: Step 7 does not return successfully until
+the signed release it names is active and healthy against the existing external database, document
+store, keys and configuration. Older release directories remain as rollback copies, so their
+presence under `C:\TermSheet\releases` does not identify the running version; the `current` junction
+and **Settings -> System** do.
+
+A complete release at the channel version is left in place. If an older release was left behind by a bootstrap
 that stopped before creating the server-key marker or any Term Sheet service, the rerun installs the
 newer verified release and repoints only `current`; the old versioned release directory remains
-preserved. On an initialized server, bootstrap deliberately leaves the active release in place while
-it overwrites the external updater, service definitions, shortcuts, and employee handoff with the
-new package. The refreshed signed updater then downloads and activates the newer application release
-through its normal backup and health-check process. Existing data, secrets, configuration, signing
+preserved. On an initialized server, bootstrap keeps the active release serving only while it
+refreshes the external updater, service definitions, shortcuts, and employee handoff. It then waits
+synchronously for the refreshed signed updater to download, migrate, health-check and activate the
+newer release; a queued, failed or still-old result makes Step 7 fail rather than print installation
+success. Existing data, secrets, configuration, signing
 trust, and rollback releases remain intact. Bootstrap refuses to trust a different signing key on a
 rerun — key rotation is a separate, deliberate procedure the vendor will walk you through.
 
@@ -548,6 +555,11 @@ After services and launchers are ready, Step 7 starts both tasks under their ins
 identity. It waits for a successful fresh channel check (and any offered signed update), verifies the
 task exit results and updater state, then checks server readiness again. A large first update can keep
 Step 7 open while it downloads, backs up, and validates the release; do not close that window.
+Immediately before that maintenance update, Step 7 quiesces the extraction and backup workers. It
+uses the official Windows service-stop path and waits for NSSM to finish the registered shutdown
+sequence without imposing an additional installer timeout or killing worker processes. The workers
+are restarted after activation or restored if the installation fails, so background work cannot
+outrank installation and is not left disabled.
 
 When the two public certificates become available, add escrow to the existing key from an elevated
 PowerShell session. This command does not rotate the key or rewrite encrypted documents:
@@ -600,6 +612,7 @@ restores user shortcuts. If a required port, web readiness check, or worker hear
 it restarts the responsible service once and verifies it again. It never silently rebuilds or replaces
 missing application or customer data.
 The audited `Client Files` set is `Term-Sheet-Extractor-Employee-Setup.exe`, its `.sha256` file,
+`employee-launcher.json` (including the independently versioned launcher release),
 `Term Sheet Extractor - Server.url`, `server-url.txt`, `README.txt`, and
 `Term-Sheet-Client-Files.zip`.
 
