@@ -10,6 +10,37 @@ either.
 
 If anything here doesn't match what you're seeing, stop and contact the vendor rather than guessing.
 
+## What setup handles automatically
+
+The supported path is one verified bootstrap command on the server and one installer on each
+employee computer. After the prerequisite Windows packages and organization-specific choices are
+available, no one manually edits a hosts file, creates an application database, writes
+`server.env`, generates application keys, registers a service, or starts a background process.
+
+| Area | Automatic behavior |
+| --- | --- |
+| Server DNS and HTTPS | Setup configures Caddy, opens only HTTPS, keeps a localhost console URL, detects the server LAN address, and writes `server-host.txt` for LAN-only employee installs. |
+| Server secrets and keys | Setup generates `AUTH_SECRET`, creates the document master key in DPAPI or Key Vault, protects configuration ACLs, and creates the requested custodian escrow packages. Provider API keys are entered later in Settings and stored encrypted. |
+| Database | Setup configures the existing PostgreSQL 18 service, roles, database, grants, migrations, loopback-only listener, and generated application credential. |
+| Services and updates | Setup installs and starts the web, extraction, backup, HTTPS proxy, updater, and rollback processor with automatic restart/startup. |
+| Employee server mode | The installer copies the server URL and, for LAN DNS, validates and installs the generated hostname mapping automatically. A managed Tailscale build installs its pinned client and organization policy automatically. |
+| Employee local mode | The launcher contains PostgreSQL 18, generates its private credential and encryption key, initializes/migrates the local database, and starts/stops it with the launcher. |
+
+Human input is intentionally limited to security or infrastructure decisions that must not be
+guessed: the Windows service credential, PostgreSQL administrator password, public hostname,
+escrow certificates (or explicit deferred-escrow approval), BitLocker recovery-key custody, and
+approved provider API keys. Node.js 24, PostgreSQL 18, NSSM, and Caddy are machine prerequisites;
+Step 1 provides verified installation commands because enterprise package policy and the PostgreSQL
+administrator password cannot safely be invented by the application.
+
+Once installed, Windows starts the server automatically after reboot. To start or repair it on
+demand, open elevated PowerShell in the retained bootstrap directory and run:
+
+```powershell
+.\repair-windows-server.ps1 -AcceptSafeRepairs
+Start-Process "C:\TermSheet\Client Files\Term Sheet Extractor - Server.url"
+```
+
 ## What you're installing
 
 A self-contained Windows server: a web service, a background worker, a reverse proxy (Caddy) that
@@ -43,6 +74,18 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   Start-Process powershell.exe -Verb RunAs
   return
 }
+```
+
+The bootstrap maintains `%ProgramData%\WinnerZone\TermSheet\installation\installation-state.json`
+as an atomic installation journal. A failed run records its exact phase, stable `TSE-*` diagnostic
+code, transcript, and safe-resume status; rerun the same Step 7 command after correcting the named
+condition. To run the shared installed diagnostic and produce a redacted ZIP without documents,
+configuration secrets, tokens, or database contents:
+
+```powershell
+.\repair-windows-server.ps1 -AcceptSafeRepairs -CreateSupportBundle
+# or bundle only:
+.\export-installation-support-bundle.ps1
 ```
 
 If elevation is declined, nothing is changed. Accept it later and restart Step 1; every installation
@@ -280,13 +323,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.5/term-sheet-bootstrap-0.3.5.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.5/term-sheet-bootstrap-0.3.5.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.5-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.5.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.6/term-sheet-bootstrap-0.3.6.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.6/term-sheet-bootstrap-0.3.6.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.6-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.6.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.5"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.6"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 for ($attempt = 1; $attempt -le 3; $attempt++) {
   try {
@@ -433,6 +476,15 @@ installation it calls the packaged PostgreSQL helper and prompts for the necessa
 passwords before downloading the release. It then creates the protected server configuration
 automatically; do not create or edit `server.env` first.
 
+The installer prints the phase and total elapsed time whenever it begins work or is still waiting.
+It also records the complete session in
+`%ProgramData%\WinnerZone\TermSheet\installation-logs\bootstrap-<date>-<time>.log`. If installation
+stops, the last screen clearly identifies the failed phase, the exact error, the script location,
+the transcript path, and the service-log directory. Completed phases are retained, so leave the
+window open, correct the reported condition, and rerun the same block. Do not delete an installation
+directory to retry. When requesting support, send the newest installation transcript and only the
+named `.err.log`; neither file should contain the password entered into the secure credential dialog.
+
 With two-custodian escrow:
 
 Before running this block, copy the two custodians' distinct public `.cer` files to the exact paths
@@ -545,8 +597,9 @@ success. Existing data, secrets, configuration, signing
 trust, and rollback releases remain intact. Bootstrap refuses to trust a different signing key on a
 rerun — key rotation is a separate, deliberate procedure the vendor will walk you through.
 
-If bootstrap stops, keep its error message, apply the specific fix it proposes, and rerun the same
-Step 7 command. It resumes from verified state and recreates missing services or launcher files; do
+If bootstrap stops, use the red **INSTALLATION STOPPED** summary rather than searching backward
+through the console. Keep its error message and transcript, apply the specific fix it proposes, and
+rerun the same Step 7 command. It resumes from verified state and recreates missing services or launcher files; do
 not delete `C:\TermSheet`, the data directory, or `%ProgramData%\WinnerZone\TermSheet` to retry.
 The updater stage is transaction-safe and is attempted up to three times before bootstrap stops.
 Each attempt verifies both enabled scheduled tasks and a readable versioned state file, so a transient
