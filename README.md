@@ -323,13 +323,13 @@ copy and can continue to Step 3. Otherwise, open PowerShell in the directory whe
 the installer and run:
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.9/term-sheet-bootstrap-0.3.9.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.9/term-sheet-bootstrap-0.3.9.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.9-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.9.zip"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.10/term-sheet-bootstrap-0.3.10.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.10/term-sheet-bootstrap-0.3.10.zip.sha256"
+$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.10-download"
+$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.10.zip"
 $bootstrapChecksum = "$bootstrapZip.sha256"
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.9"
+$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.10"
 New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
 for ($attempt = 1; $attempt -le 3; $attempt++) {
   try {
