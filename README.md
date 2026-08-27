@@ -1,7 +1,7 @@
 # Term Sheet server — operator guide
 
 > Verified against the current bootstrap, updater, release layout, and service installer on
-> 26 August 2026.
+> 27 August 2026.
 
 This is for the person installing and running the Term Sheet server on your own Windows machine.
 It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
@@ -33,13 +33,10 @@ approved provider API keys. Node.js 24, PostgreSQL 18, NSSM, and Caddy are machi
 Step 1 provides verified installation commands because enterprise package policy and the PostgreSQL
 administrator password cannot safely be invented by the application.
 
-Once installed, Windows starts the server automatically after reboot. To start or repair it on
-demand, open elevated PowerShell in the retained bootstrap directory and run:
-
-```powershell
-.\repair-windows-server.ps1 -AcceptSafeRepairs
-Start-Process "C:\TermSheet\Client Files\Term Sheet Extractor - Server.url"
-```
+Once installed, Windows starts the server automatically after reboot. The installation and repair
+commands appear only after the guide has downloaded the scripts that provide them. Later, the
+[day-to-day operation](#day-to-day-operation) section covers starting or repairing the server on
+demand.
 
 ## What you're installing
 
@@ -74,18 +71,6 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
   Start-Process powershell.exe -Verb RunAs
   return
 }
-```
-
-The bootstrap maintains `%ProgramData%\WinnerZone\TermSheet\installation\installation-state.json`
-as an atomic installation journal. A failed run records its exact phase, stable `TSE-*` diagnostic
-code, transcript, and safe-resume status; rerun the same Step 7 command after correcting the named
-condition. To run the shared installed diagnostic and produce a redacted ZIP without documents,
-configuration secrets, tokens, or database contents:
-
-```powershell
-.\repair-windows-server.ps1 -AcceptSafeRepairs -CreateSupportBundle
-# or bundle only:
-.\export-installation-support-bundle.ps1
 ```
 
 If elevation is declined, nothing is changed. Accept it later and restart Step 1; every installation
@@ -271,135 +256,150 @@ finally {
   }
 }
 
+# Verify both installed tools before removing the temporary downloads.
+Get-Item $nssmDestination, $caddyDestination
+& $nssmDestination version
+if ($LASTEXITCODE -ne 0) { throw "NSSM version check failed." }
+& $caddyDestination version
+if ($LASTEXITCODE -ne 0) { throw "Caddy version check failed." }
+
 Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
 ```
 
 NSSM 2.24 prints a plausible version inside its error/usage banner but exits with code 1 and fails
-Steps 4 and 7. The supported build must return exit code 0 for `version`. Verify both installations:
+the later checks. The supported build must return exit code 0 for `version`; the installation block
+above verifies both tools before it finishes. The service identity and credential are collected once,
+immediately before installation in Step 7, so they do not have to be retained while completing the
+package checks.
 
-```powershell
-Get-Item C:\tools\nssm.exe, C:\tools\caddy.exe
-& C:\tools\nssm.exe version
-if ($LASTEXITCODE -ne 0) { throw "NSSM version check failed." }
-& C:\tools\caddy.exe version
-if ($LASTEXITCODE -ne 0) { throw "Caddy version check failed." }
-```
-
-By default, use the currently signed-in Windows account and retain its credential in this PowerShell
-session. Reading the identity from Windows works for both local and domain sign-ins and avoids asking
-the client to create another account solely for setup:
-
-```powershell
-$serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-do {
-  try {
-    $serviceAccount = New-Object Security.Principal.NTAccount($serviceUser)
-    $serviceSid = $serviceAccount.Translate([Security.Principal.SecurityIdentifier]).Value
-    $serviceCredential = Get-Credential -UserName $serviceUser `
-      -Message "Enter the current Windows account password used to run the Term Sheet services"
-    if (-not $serviceCredential) { Write-Warning "No credential was entered." }
-  } catch {
-    Write-Warning "'$serviceUser' did not resolve: $($_.Exception.Message)"
-    $serviceUser = Read-Host "Enter COMPUTERNAME\username or DOMAIN\username, or press Enter to stop"
-    if (-not $serviceUser) { return }
-  }
-} until ($serviceSid -and $serviceCredential)
-$serviceSid
-```
-
-If the signed-in account is a domain account, set `$serviceUser` to its real `DOMAIN\username`
-instead. A dedicated service account or gMSA remains supported when company policy requires one;
-set `$serviceUser` and `$serviceCredential` to that approved identity. The bootstrap resolves the
-account to a SID before changing files or services, so a wrong account name fails before installation.
-If the password is rejected during Step 7, run this credential block again and rerun the same
-bootstrap command; no partial service installation needs to be removed first.
-
-## Step 2: Download and extract the bootstrap package
+## Steps 2-5: Download, authenticate, and verify the bootstrap package
 
 The distribution repository root intentionally contains only the update channel, signing key, and
 this guide. The PowerShell scripts are in the versioned bootstrap ZIP attached to the current server
-release. If `preflight-connectivity.ps1` is already beside this guide, you are reading the extracted
-copy and can continue to Step 3. Otherwise, open PowerShell in the directory where you want to keep
-the installer and run:
+release. Run the following block once. If the scripts are already beside this guide, it reuses that
+extracted package. Otherwise it downloads, checksum-verifies, and extracts the package first. It
+then authenticates the signing key, checks the machine, and verifies the signed release without
+making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.10/term-sheet-bootstrap-0.3.10.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.10/term-sheet-bootstrap-0.3.10.zip.sha256"
-$downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.10-download"
-$bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.10.zip"
-$bootstrapChecksum = "$bootstrapZip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.11/term-sheet-bootstrap-0.3.11.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.11/term-sheet-bootstrap-0.3.11.zip.sha256"
+$manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
+$publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
-$packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.10"
-New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
-for ($attempt = 1; $attempt -le 3; $attempt++) {
-  try {
-    Invoke-WebRequest -Uri $bootstrapUrl -OutFile "$bootstrapZip.part" -UseBasicParsing -ErrorAction Stop
-    Move-Item -LiteralPath "$bootstrapZip.part" -Destination $bootstrapZip -Force
-    Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing -ErrorAction Stop
-    $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
-    $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch; the download will not be used." }
-    $stagingDirectory = "$packageDirectory.extracting"
-    if (Test-Path -LiteralPath $stagingDirectory) { Remove-Item -LiteralPath $stagingDirectory -Recurse -Force }
-    Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $stagingDirectory -ErrorAction Stop
-    if (Test-Path -LiteralPath $packageDirectory) { Remove-Item -LiteralPath $packageDirectory -Recurse -Force -ErrorAction Stop }
-    Move-Item -LiteralPath $stagingDirectory -Destination $packageDirectory -ErrorAction Stop
-    break
-  } catch {
-    Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
-    Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
-    if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Step 2." }
-    Read-Host "Correct the reported problem, then press Enter to retry"
+if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
+  $packageDirectory = $PWD.Path
+} else {
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.11-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.11.zip"
+  $bootstrapChecksum = "$bootstrapZip.sha256"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.11"
+  New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      Invoke-WebRequest -Uri $bootstrapUrl -OutFile "$bootstrapZip.part" -UseBasicParsing -ErrorAction Stop
+      Move-Item -LiteralPath "$bootstrapZip.part" -Destination $bootstrapZip -Force
+      Invoke-WebRequest -Uri $bootstrapChecksumUrl -OutFile $bootstrapChecksum -UseBasicParsing -ErrorAction Stop
+      $expectedBootstrapHash = ((Get-Content -LiteralPath $bootstrapChecksum -Raw).Trim() -split '\s+')[0].ToLowerInvariant()
+      $actualBootstrapHash = (Get-FileHash -LiteralPath $bootstrapZip -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($actualBootstrapHash -ne $expectedBootstrapHash) { throw "Bootstrap ZIP checksum mismatch; the download will not be used." }
+      $stagingDirectory = "$packageDirectory.extracting"
+      if (Test-Path -LiteralPath $stagingDirectory) { Remove-Item -LiteralPath $stagingDirectory -Recurse -Force }
+      Expand-Archive -LiteralPath $bootstrapZip -DestinationPath $stagingDirectory -ErrorAction Stop
+      if (Test-Path -LiteralPath $packageDirectory) { Remove-Item -LiteralPath $packageDirectory -Recurse -Force -ErrorAction Stop }
+      Move-Item -LiteralPath $stagingDirectory -Destination $packageDirectory -ErrorAction Stop
+      break
+    } catch {
+      Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
+      Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
+      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Steps 2-5." }
+      Read-Host "Correct the reported problem, then press Enter to retry"
+    }
   }
 }
 Set-Location $packageDirectory
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 Get-ChildItem -LiteralPath $packageDirectory -Recurse -File | Unblock-File
-Get-ChildItem .\preflight-connectivity.ps1, .\verify-release.ps1, `
-  .\configure-postgresql18.ps1, .\bootstrap-windows-server.ps1
-Get-ChildItem .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe, `
-  .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe.sha256
+
+$requiredFiles = @(
+  "preflight-connectivity.ps1",
+  "verify-release.ps1",
+  "configure-postgresql18.ps1",
+  "bootstrap-windows-server.ps1",
+  "repair-windows-server.ps1",
+  "export-installation-support-bundle.ps1",
+  "release-signing-public.pem"
+)
+foreach ($requiredFile in $requiredFiles) {
+  if (-not (Test-Path -LiteralPath (Join-Path $PWD $requiredFile) -PathType Leaf)) {
+    throw "The extracted bootstrap package is missing $requiredFile."
+  }
+}
+$employeeInstaller = @(Get-ChildItem `
+  .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe -File)
+$employeeChecksum = @(Get-ChildItem `
+  .\employee-launcher\Term-Sheet-Extractor-Employee-Setup-*.exe.sha256 -File)
+if ($employeeInstaller.Count -ne 1 -or $employeeChecksum.Count -ne 1) {
+  throw "The package must contain exactly one employee installer and its checksum."
+}
+
+$trustedFingerprint = (Read-Host `
+  "Enter the signing-key SHA-256 fingerprint received through a separate trusted channel"
+).Replace(" ", "").ToLowerInvariant()
+if ($trustedFingerprint -notmatch '^[0-9a-f]{64}$') {
+  throw "The trusted fingerprint must contain exactly 64 hexadecimal characters."
+}
+$actualFingerprint = (
+  Get-FileHash .\release-signing-public.pem -Algorithm SHA256
+).Hash.ToLowerInvariant()
+if ($trustedFingerprint -ne $publishedFingerprint -or
+    $trustedFingerprint -ne $actualFingerprint) {
+  throw "The signing-key fingerprint does not match. Stop and contact the vendor."
+}
+
+$global:LASTEXITCODE = 0
+.\preflight-connectivity.ps1 -ManifestUri $manifestUri `
+  -PublicKeyPath .\release-signing-public.pem `
+  -ExpectedPublicKeyFingerprint $trustedFingerprint `
+  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe -OfferRemediation
+if ($LASTEXITCODE -ne 0) {
+  throw "Machine preflight failed. Apply every reported remediation and rerun Steps 2-5."
+}
+
+$global:LASTEXITCODE = 0
+.\verify-release.ps1 -ManifestUri $manifestUri `
+  -PublicKeyPath .\release-signing-public.pem
+if ($LASTEXITCODE -ne 0) {
+  throw "Signed release verification failed. Do not continue to installation."
+}
+Write-Host "Steps 2-5 passed. Keep this window open and continue to Step 6."
 ```
 
 The process-scoped execution policy applies only to this PowerShell window; it does not change the
 computer or user policy. `Unblock-File` removes the downloaded-file marker from the already
-checksum-verified extracted copy. The commands must then list all four scripts plus one employee
-installer and its checksum. Run every remaining command from that extracted package directory and
-the same elevated PowerShell window.
+checksum-verified extracted copy. Run every remaining command from that extracted package directory
+and the same elevated PowerShell window.
 
-## Step 3: Confirm you have the right key
+### Signing-key authentication
 
-Everything below trusts one file: `release-signing-public.pem`, included in this package. Before
-using it, confirm its SHA-256 fingerprint matches the one the vendor gave you **through a separate
+The combined block trusts one file: `release-signing-public.pem`, included in this package. It
+requires the SHA-256 fingerprint the vendor gave you **through a separate
 channel** from wherever you got this package — a phone call, a signed email, a contract appendix.
 Never accept the fingerprint printed alongside the download itself; that's exactly what an attacker
 controlling the download would also control.
 
-```powershell
-Get-FileHash .\release-signing-public.pem -Algorithm SHA256
-```
-
 If it doesn't match what the vendor told you, stop. Don't run anything else in this package, and
 contact the vendor immediately.
 
-## Step 4: Check the machine
+### Machine checks
 
 `preflight-connectivity.ps1` confirms the machine is ready before you commit to an install. Its
 checks are read-only and report every problem in one pass. The optional remediation mode below only
 makes a change if you explicitly accept its pinned Node.js installation prompt.
 
-The distribution copy of this guide fills in the exact manifest URL and signing-key fingerprint
-when a release is published. Keep both values quoted if you copy this template from a source
-checkout: PowerShell treats an unquoted `<placeholder>` as an operator.
-
-```powershell
-$manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
-$expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217"
-
-.\preflight-connectivity.ps1 -ManifestUri $manifestUri `
-  -PublicKeyPath .\release-signing-public.pem -ExpectedPublicKeyFingerprint $expectedFingerprint `
-  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe -OfferRemediation
-```
+The distribution copy of this guide fills in the exact manifest URL and published signing-key
+fingerprint when a release is built. The block still requires the separately received fingerprint
+and compares all three values before running the preflight.
 
 | Check | A failure means |
 | --- | --- |
@@ -414,7 +414,8 @@ $expectedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8f
 | Data volume BitLocker | `C:\TermSheetData` would be stored on a volume that is not yet fully encrypted and protected. Enable BitLocker and escrow its recovery key before Step 7. |
 
 Fix everything reported before continuing — each one will surface again, less clearly, during actual
-install or first update.
+install or first update. Rerun the complete Steps 2-5 block after applying the remediation; it reuses
+the extracted package rather than downloading it again.
 
 The JSON result includes a `remediation` for every failed check. With `-OfferRemediation`, the script
 also prints those actions and can install the pinned Node.js 24 x64 package after confirmation when
@@ -423,21 +424,18 @@ company policy. A missing key can be repaired by re-extracting a clean package; 
 mismatch is never bypassed and must be escalated to the vendor. Fix the listed items and rerun the
 same command until every check passes.
 
-## Step 5: Verify the release before installing
+### Signed-release verification
 
-`verify-release.ps1` downloads the exact release your key would install, checks its signature,
+The combined block runs `verify-release.ps1`, which downloads the exact release your key would install, checks its signature,
 size, and checksum, and confirms its release marker — the same checks the installer and every future
 update apply — then deletes the download. It changes nothing on the machine.
-
-```powershell
-.\verify-release.ps1 -ManifestUri $manifestUri -PublicKeyPath .\release-signing-public.pem
-```
 
 A clean run prints the version and release identifier it verified. Any failure here means don't
 proceed with install — something about the release doesn't check out, and continuing anyway would
 just fail the same check again during installation, or worse, not fail it.
 
-For a timeout or HTTPS error, apply the matching Step 4 network remediation and rerun verification.
+For a timeout or HTTPS error, apply the matching preflight network remediation and rerun the complete
+Steps 2-5 block.
 For a missing file, re-extract the verified bootstrap ZIP into a fresh directory. A signature,
 checksum, release-marker, or signing-key failure is not repairable on the client machine: discard
 the downloaded copy, obtain a fresh package, and contact the vendor if the fresh copy also fails.
@@ -446,7 +444,7 @@ There is no supported switch that bypasses these checks.
 ## Step 6: Understand the automatic server configuration
 
 There is no environment-file step to perform. During Step 7, the bootstrap automatically runs the
-verified `configure-postgresql18.ps1` helper, prompts securely for the PostgreSQL administrator and
+verified `.\configure-postgresql18.ps1` helper, prompts securely for the PostgreSQL administrator and
 application-role passwords it needs, and receives the application password as a `SecureString`.
 It then creates `%ProgramData%\WinnerZone\TermSheet\config\server.env` from the packaged baseline
 and fills in the escaped `DATABASE_URL`, a new 48-byte `AUTH_SECRET`, `C:\TermSheetData\objects`,
@@ -470,8 +468,8 @@ provider configuration therefore require no Notepad session and no direct access
 
 ## Step 7: Install
 
-From an elevated PowerShell session, in this package's directory, run one complete block below. Each
-block obtains the identity and credential again, so it also works in a newly elevated window. On a fresh
+From an elevated PowerShell session, in this package's directory, run the one complete block below.
+It obtains the identity and credential itself, so it also works in a newly elevated window. On a fresh
 installation it calls the packaged PostgreSQL helper and prompts for the necessary database
 passwords before downloading the release. It then creates the protected server configuration
 automatically; do not create or edit `server.env` first.
@@ -485,15 +483,30 @@ window open, correct the reported condition, and rerun the same block. Do not de
 directory to retry. When requesting support, send the newest installation transcript and only the
 named `.err.log`; neither file should contain the password entered into the secure credential dialog.
 
-With two-custodian escrow:
+The bootstrap maintains `%ProgramData%\WinnerZone\TermSheet\installation\installation-state.json`
+as an atomic installation journal. A failed run records its exact phase, stable `TSE-*` diagnostic
+code, transcript, and safe-resume status. Correct the named condition and rerun this same block.
 
-Before running this block, copy the two custodians' distinct public `.cer` files to the exact paths
-shown (or replace both paths in the command). The private keys remain with the custodians.
+The block asks for one recovery choice. Type `ESCROW` when the two custodians' distinct public `.cer`
+files are available at the shown paths; their private keys remain with them. Type `DEFER` only when
+the client has formally accepted the temporary recovery risk. After installation, the same block
+runs the complete repair/health check, so Step 8 requires no second command.
 
 ```powershell
 $servicePolicy = Get-ExecutionPolicy -Scope Process
 if ($servicePolicy -ne "Bypass") { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force }
 Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
+$manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
+
+foreach ($requiredFile in @(
+  "bootstrap-windows-server.ps1",
+  "repair-windows-server.ps1",
+  "release-signing-public.pem"
+)) {
+  if (-not (Test-Path -LiteralPath (Join-Path $PWD $requiredFile) -PathType Leaf)) {
+    throw "Run Step 7 from the extracted bootstrap package directory; $requiredFile is missing."
+  }
+}
 
 $serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 do {
@@ -516,49 +529,55 @@ do {
   if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for termsheetextractor.local." }
 } until ($hostnameIsValid)
 
-.\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
-  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
-  -PublicHostname $publicHostname `
-  -ServiceUser $serviceUser -ServiceCredential $serviceCredential `
-  -EscrowDirectory C:\TermSheetKeyEscrow -EscrowCertificatePath C:\TermSheetKeyEscrow\custodian-a.cer,C:\TermSheetKeyEscrow\custodian-b.cer `
-  -ManifestUri $manifestUri -ReleasePublicKeyPath .\release-signing-public.pem
-```
+$bootstrapArguments = @{
+  ApplicationRoot = "C:\TermSheet"
+  NssmPath = "C:\tools\nssm.exe"
+  CaddyPath = "C:\tools\caddy.exe"
+  PublicHostname = $publicHostname
+  ServiceUser = $serviceUser
+  ServiceCredential = $serviceCredential
+  ManifestUri = $manifestUri
+  ReleasePublicKeyPath = (Join-Path $PWD "release-signing-public.pem")
+}
 
-If no custodians have been appointed, the client may formally accept the temporary recovery risk
-and omit both escrow arguments by using `-AllowDeferredEscrow`:
-
-```powershell
-$servicePolicy = Get-ExecutionPolicy -Scope Process
-if ($servicePolicy -ne "Bypass") { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force }
-Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
-
-$serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-do {
-  try {
-    $serviceSid = (New-Object Security.Principal.NTAccount($serviceUser)).Translate([Security.Principal.SecurityIdentifier]).Value
-    $serviceCredential = Get-Credential -UserName $serviceUser `
-      -Message "Log in to the Windows account that will run the Term Sheet services"
-    if (-not $serviceCredential) { Write-Warning "No credential was entered." }
-  } catch {
-    Write-Warning "'$serviceUser' did not resolve: $($_.Exception.Message)"
-    $serviceUser = Read-Host "Enter COMPUTERNAME\username or DOMAIN\username, or press Enter to stop"
-    if (-not $serviceUser) { return }
+$recoveryChoice = (Read-Host `
+  "Type ESCROW to use two custodian certificates, or DEFER for approved temporary deferral"
+).Trim().ToUpperInvariant()
+switch ($recoveryChoice) {
+  "ESCROW" {
+    $escrowDirectory = "C:\TermSheetKeyEscrow"
+    $escrowCertificates = @(
+      "C:\TermSheetKeyEscrow\custodian-a.cer",
+      "C:\TermSheetKeyEscrow\custodian-b.cer"
+    )
+    foreach ($certificate in $escrowCertificates) {
+      if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) {
+        throw "Escrow certificate not found: $certificate"
+      }
+    }
+    $bootstrapArguments.EscrowDirectory = $escrowDirectory
+    $bootstrapArguments.EscrowCertificatePath = $escrowCertificates
   }
-} until ($serviceSid -and $serviceCredential)
+  "DEFER" {
+    $bootstrapArguments.AllowDeferredEscrow = $true
+  }
+  default {
+    throw "Enter exactly ESCROW or DEFER. No installation change was made."
+  }
+}
 
-do {
-  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter for termsheetextractor.local"
-  if (-not $publicHostname) { $publicHostname = "termsheetextractor.local" }
-  $hostnameIsValid = $publicHostname -match '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -and -not $publicHostname.Contains('..')
-  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for termsheetextractor.local." }
-} until ($hostnameIsValid)
+$global:LASTEXITCODE = 0
+& .\bootstrap-windows-server.ps1 @bootstrapArguments
+if ($LASTEXITCODE -ne 0) {
+  throw "Installation did not complete. Apply the recovery action above and rerun Step 7."
+}
 
-.\bootstrap-windows-server.ps1 -ApplicationRoot C:\TermSheet `
-  -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe `
-  -PublicHostname $publicHostname `
-  -ServiceUser $serviceUser -ServiceCredential $serviceCredential `
-  -AllowDeferredEscrow `
-  -ManifestUri $manifestUri -ReleasePublicKeyPath .\release-signing-public.pem
+$global:LASTEXITCODE = 0
+& .\repair-windows-server.ps1 -AcceptSafeRepairs
+if ($LASTEXITCODE -ne 0) {
+  throw "Post-install checks failed. Apply every recovery action above and rerun Step 7."
+}
+Write-Host "Installation and Step 8 server checks passed."
 ```
 
 This is not a recovery mechanism. Until escrow is added, losing the Windows machine or its key
@@ -571,13 +590,14 @@ What each required flag is:
 | --- | --- |
 | `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
+| `-PgBin` | Optional PostgreSQL 18 command-line-tools directory. Defaults to `C:\Program Files\PostgreSQL\18\bin`; use this when IT installed the approved tools elsewhere. Bootstrap records the absolute `pg_dump` and `pg_restore` paths for services and the SYSTEM updater task. |
 | `-PublicHostname` | Defaults to `termsheetextractor.local`. Step 7 puts the current LAN address in the employee installer; setup replaces older mappings for that hostname on each employee computer automatically. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
-| `-ServiceUser` | The Windows account the application services run as. These blocks default to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
+| `-ServiceUser` | The Windows account the application services run as. The block defaults to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
 | `-AllowDeferredEscrow` | Explicitly installs without recovery packages when custodians do not yet exist. It cannot be combined with either escrow argument and must be treated as a temporary, approved data-loss risk. |
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
-| `-ReleasePublicKeyPath` | The key from [Step 3](#step-3-confirm-you-have-the-right-key). |
+| `-ReleasePublicKeyPath` | The key authenticated in [Steps 2-5](#steps-2-5-download-authenticate-and-verify-the-bootstrap-package). |
 
 It's safe to run more than once, including from a newly downloaded bootstrap package. Treat a newer
 bootstrap as an authoritative maintenance installation: Step 7 does not return successfully until
@@ -639,20 +659,10 @@ Four Windows services, all managed by NSSM, all set to restart automatically:
 | `TermSheetBackup` | Scheduled database/document backups |
 
 Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
-errors). From the same verified package directory and an elevated PowerShell window, run this entire
-block. It avoids cascading command errors when a component is absent and does not report success
-unless every required check passes:
-
-```powershell
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
-Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
-.\repair-windows-server.ps1 -AcceptSafeRepairs
-if ($LASTEXITCODE -ne 0) {
-  Write-Warning "Step 8 found a problem. Apply every recovery action printed above, then rerun this block."
-  return
-}
-Write-Host "Step 8 server checks passed."
-```
+errors). The Step 7 block already runs the repair helper after installation.
+It stops unless every required check passes. Do not copy or run another PowerShell block here;
+continue only after Step 7
+prints `Installation and Step 8 server checks passed.`
 
 The helper checks elevation; the PostgreSQL and four application services and their automatic-start
 configuration; both scheduled updater tasks; updater JSON and active-release version agreement;
@@ -903,6 +913,20 @@ installation used a custom `StateRoot`; inspect the scheduled task action for it
 ```
 
 ## Getting help
+
+From elevated PowerShell in the retained extracted bootstrap package directory, create a redacted
+support ZIP with the repair context included:
+
+```powershell
+if (-not (Test-Path -LiteralPath .\repair-windows-server.ps1 -PathType Leaf)) {
+  throw "Open PowerShell in the retained extracted bootstrap package directory, then rerun this block."
+}
+.\repair-windows-server.ps1 -AcceptSafeRepairs -CreateSupportBundle
+```
+
+To export only the bundle without running checks or repairs, use
+`.\export-installation-support-bundle.ps1` from that same directory. Neither bundle includes
+documents, configuration secrets, tokens, or database contents.
 
 Contact your vendor with the version from `updater-state.json`'s `installedVersion`, the relevant
 lines from the service's `.err.log`, and — if it's update-related — the full `updater-state.json`.
