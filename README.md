@@ -28,10 +28,11 @@ available, no one manually edits a hosts file, creates an application database, 
 
 Human input is intentionally limited to security or infrastructure decisions that must not be
 guessed: the Windows service credential, PostgreSQL administrator password, public hostname,
-escrow certificates (or explicit deferred-escrow approval), BitLocker recovery-key custody, and
+whether two custodian certificates are currently available, BitLocker recovery-key custody, and
 approved provider API keys. Node.js 24, PostgreSQL 18, NSSM, and Caddy are machine prerequisites;
 Step 1 provides verified installation commands because enterprise package policy and the PostgreSQL
-administrator password cannot safely be invented by the application.
+administrator password cannot safely be invented by the application. Numbered steps identify
+operator interaction points; automatic checks and explanatory sections are not separate steps.
 
 Once installed, Windows starts the server automatically after reboot. The installation and repair
 commands appear only after the guide has downloaded the scripts that provide them. Later, the
@@ -58,7 +59,8 @@ source code or build credentials. Distribution to employee computers is handled 
 
 Use a supported x64 Windows server, assign it a fixed LAN address, and point the intended DNS name
 at that address. Normally, two people should also be available to hold escrow certificates. If the
-organization has not appointed them yet, Step 7 provides an explicit temporary deferred-escrow
+organization has not appointed them yet, Step 3 asks whether to install with or without them and
+provides an explicit temporary deferred-escrow
 procedure.
 
 Open **Windows PowerShell as Administrator**. All commands in this step run in that elevated window.
@@ -131,7 +133,7 @@ If WinGet is unavailable, download and run the PostgreSQL 18 x64 EDB installer l
 [official PostgreSQL Windows installers page](https://www.postgresql.org/download/windows/), using
 the same selections above.
 
-If PostgreSQL 18 is already present, keep it and continue; the Step 7 bootstrap helper discovers and
+If PostgreSQL 18 is already present, keep it and continue; the Step 3 bootstrap helper discovers and
 repairs the existing cluster. If the installer reports an incomplete installation, use its Repair option,
 confirm `C:\Program Files\PostgreSQL\18\bin\psql.exe` exists, then rerun this step.
 
@@ -144,12 +146,12 @@ $volume = Get-BitLockerVolume -MountPoint C:
 $volume | Format-List MountPoint,VolumeStatus,ProtectionStatus,EncryptionPercentage
 if ($volume.VolumeStatus -ne "FullyEncrypted" -or $volume.ProtectionStatus -ne "On" -or
     $volume.EncryptionPercentage -ne 100) {
-  throw "C: must be fully encrypted and protected before Step 7."
+  throw "C: must be fully encrypted and protected before installation."
 }
 ```
 
 Database configuration happens with the verified `configure-postgresql18.ps1` helper during
-Step 7. Do not manually create roles or a database here. The helper handles fresh installations,
+Step 3. Do not manually create roles or a database here. The helper handles fresh installations,
 safe reruns, existing login or non-login roles, forgotten application-role passwords, a database
 already owned by `term_sheet_extractor_admin`, the older `term_sheet_app` ownership layout, and a
 database owned by another administrator. It also corrects runtime grants, the firewall rule, service
@@ -269,10 +271,10 @@ Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyCont
 NSSM 2.24 prints a plausible version inside its error/usage banner but exits with code 1 and fails
 the later checks. The supported build must return exit code 0 for `version`; the installation block
 above verifies both tools before it finishes. The service identity and credential are collected once,
-immediately before installation in Step 7, so they do not have to be retained while completing the
+immediately before installation in Step 3, so they do not have to be retained while completing the
 package checks.
 
-## Steps 2-5: Download, authenticate, and verify the bootstrap package
+## Step 2: Prepare and verify the bootstrap package
 
 The distribution repository root intentionally contains only the update channel, signing key, and
 this guide. The PowerShell scripts are in the versioned bootstrap ZIP attached to the current server
@@ -282,18 +284,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.11/term-sheet-bootstrap-0.3.11.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.11/term-sheet-bootstrap-0.3.11.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.12/term-sheet-bootstrap-0.3.12.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.12/term-sheet-bootstrap-0.3.12.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.11-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.11.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.12-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.12.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.11"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.12"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -312,7 +314,7 @@ if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathTy
     } catch {
       Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
       Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
-      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Steps 2-5." }
+      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Step 2." }
       Read-Host "Correct the reported problem, then press Enter to retry"
     }
   }
@@ -343,36 +345,34 @@ if ($employeeInstaller.Count -ne 1 -or $employeeChecksum.Count -ne 1) {
   throw "The package must contain exactly one employee installer and its checksum."
 }
 
-$trustedFingerprint = (Read-Host `
-  "Enter the signing-key SHA-256 fingerprint received through a separate trusted channel"
-).Replace(" ", "").ToLowerInvariant()
-if ($trustedFingerprint -notmatch '^[0-9a-f]{64}$') {
-  throw "The trusted fingerprint must contain exactly 64 hexadecimal characters."
+$expectedFingerprint = $publishedFingerprint
+if ($expectedFingerprint -notmatch '^[0-9a-f]{64}$') {
+  throw "This published guide does not contain a valid pinned signing-key fingerprint. Obtain a fresh release copy."
 }
 $actualFingerprint = (
   Get-FileHash .\release-signing-public.pem -Algorithm SHA256
 ).Hash.ToLowerInvariant()
-if ($trustedFingerprint -ne $publishedFingerprint -or
-    $trustedFingerprint -ne $actualFingerprint) {
+if ($expectedFingerprint -ne $actualFingerprint) {
   throw "The signing-key fingerprint does not match. Stop and contact the vendor."
 }
 
 $global:LASTEXITCODE = 0
 .\preflight-connectivity.ps1 -ManifestUri $manifestUri `
   -PublicKeyPath .\release-signing-public.pem `
-  -ExpectedPublicKeyFingerprint $trustedFingerprint `
+  -ExpectedPublicKeyFingerprint $expectedFingerprint `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe -OfferRemediation
 if ($LASTEXITCODE -ne 0) {
-  throw "Machine preflight failed. Apply every reported remediation and rerun Steps 2-5."
+  throw "Machine preflight failed. Apply every reported remediation and rerun Step 2."
 }
 
 $global:LASTEXITCODE = 0
 .\verify-release.ps1 -ManifestUri $manifestUri `
-  -PublicKeyPath .\release-signing-public.pem
+  -PublicKeyPath .\release-signing-public.pem `
+  -ExpectedPublicKeyFingerprint $expectedFingerprint
 if ($LASTEXITCODE -ne 0) {
   throw "Signed release verification failed. Do not continue to installation."
 }
-Write-Host "Steps 2-5 passed. Keep this window open and continue to Step 6."
+Write-Host "Step 2 passed. Keep this window open and continue to Step 3."
 ```
 
 The process-scoped execution policy applies only to this PowerShell window; it does not change the
@@ -380,16 +380,13 @@ computer or user policy. `Unblock-File` removes the downloaded-file marker from 
 checksum-verified extracted copy. Run every remaining command from that extracted package directory
 and the same elevated PowerShell window.
 
-### Signing-key authentication
+### Automatic signing-key authentication
 
-The combined block trusts one file: `release-signing-public.pem`, included in this package. It
-requires the SHA-256 fingerprint the vendor gave you **through a separate
-channel** from wherever you got this package — a phone call, a signed email, a contract appendix.
-Never accept the fingerprint printed alongside the download itself; that's exactly what an attacker
-controlling the download would also control.
-
-If it doesn't match what the vendor told you, stop. Don't run anything else in this package, and
-contact the vendor immediately.
+The combined block trusts one file: `release-signing-public.pem`, included in this package. Release
+publication pins that file's SHA-256 fingerprint into this guide automatically. The block computes
+the downloaded key's fingerprint and compares it with the pinned value before it runs any packaged
+script. The operator is never asked to find, copy, or retype a hash. If the values do not match, stop,
+discard the download, and contact the vendor immediately.
 
 ### Machine checks
 
@@ -397,24 +394,24 @@ contact the vendor immediately.
 checks are read-only and report every problem in one pass. The optional remediation mode below only
 makes a change if you explicitly accept its pinned Node.js installation prompt.
 
-The distribution copy of this guide fills in the exact manifest URL and published signing-key
-fingerprint when a release is built. The block still requires the separately received fingerprint
-and compares all three values before running the preflight.
+The distribution copy of this guide fills in the exact manifest URL and pinned signing-key
+fingerprint when a release is built, then the block compares the pinned and computed values before
+running the preflight.
 
 | Check | A failure means |
 | --- | --- |
 | DNS resolution | This machine can't resolve the update server's hostname. Check DNS configuration. |
 | Outbound HTTPS to manifest host | A firewall or proxy is blocking outbound HTTPS. The server needs this reachable permanently, not just during install — it's how it gets every future update. |
-| Release public key present / fingerprint match | Either the key file is missing, or it doesn't match the fingerprint you were given. **Treat a mismatch as a possible tampering attempt, not a typo** — stop and contact the vendor. |
+| Release public key present / fingerprint match | Either the key file is missing, or it doesn't match the fingerprint pinned at release publication. **Treat a mismatch as a possible tampering attempt, not a typo** — stop and contact the vendor. |
 | Node.js available | Node isn't installed, isn't on the expected path, is older than version 22, or isn't the x64 build. |
 | System tar.exe available | Windows' built-in `tar.exe` (System32) is missing or shadowed by another `tar` on PATH. |
 | NSSM / Caddy present | The path you gave doesn't point at a real file. |
-| Elevated PowerShell | Step 7 needs an administrator window to configure services, ACLs, firewall rules, and scheduled tasks. |
+| Elevated PowerShell | Step 3 needs an administrator window to configure services, ACLs, firewall rules, and scheduled tasks. |
 | PostgreSQL 18 tools / service | The PostgreSQL server or required `psql`, `pg_dump`, and `pg_restore` tools are missing or the wrong major version. |
-| Data volume BitLocker | `C:\TermSheetData` would be stored on a volume that is not yet fully encrypted and protected. Enable BitLocker and escrow its recovery key before Step 7. |
+| Data volume BitLocker | `C:\TermSheetData` would be stored on a volume that is not yet fully encrypted and protected. Enable BitLocker and escrow its recovery key before Step 3. |
 
 Fix everything reported before continuing — each one will surface again, less clearly, during actual
-install or first update. Rerun the complete Steps 2-5 block after applying the remediation; it reuses
+install or first update. Rerun the complete Step 2 block after applying the remediation; it reuses
 the extracted package rather than downloading it again.
 
 The JSON result includes a `remediation` for every failed check. With `-OfferRemediation`, the script
@@ -435,15 +432,15 @@ proceed with install — something about the release doesn't check out, and cont
 just fail the same check again during installation, or worse, not fail it.
 
 For a timeout or HTTPS error, apply the matching preflight network remediation and rerun the complete
-Steps 2-5 block.
+Step 2 block.
 For a missing file, re-extract the verified bootstrap ZIP into a fresh directory. A signature,
 checksum, release-marker, or signing-key failure is not repairable on the client machine: discard
 the downloaded copy, obtain a fresh package, and contact the vendor if the fresh copy also fails.
 There is no supported switch that bypasses these checks.
 
-## Step 6: Understand the automatic server configuration
+## What installation configures automatically
 
-There is no environment-file step to perform. During Step 7, the bootstrap automatically runs the
+There is no environment-file step to perform. During Step 3, the bootstrap automatically runs the
 verified `.\configure-postgresql18.ps1` helper, prompts securely for the PostgreSQL administrator and
 application-role passwords it needs, and receives the application password as a `SecureString`.
 It then creates `%ProgramData%\WinnerZone\TermSheet\config\server.env` from the packaged baseline
@@ -466,7 +463,7 @@ choose **Developer access**, and enter approved keys under **Settings -> API key
 `SECRET_STORE=encrypted` stores them through the application's encrypted secret store. Staff and
 provider configuration therefore require no Notepad session and no direct access to `server.env`.
 
-## Step 7: Install
+## Step 3: Answer the installation questions and install
 
 From an elevated PowerShell session, in this package's directory, run the one complete block below.
 It obtains the identity and credential itself, so it also works in a newly elevated window. On a fresh
@@ -487,10 +484,10 @@ The bootstrap maintains `%ProgramData%\WinnerZone\TermSheet\installation\install
 as an atomic installation journal. A failed run records its exact phase, stable `TSE-*` diagnostic
 code, transcript, and safe-resume status. Correct the named condition and rerun this same block.
 
-The block asks for one recovery choice. Type `ESCROW` when the two custodians' distinct public `.cer`
-files are available at the shown paths; their private keys remain with them. Type `DEFER` only when
-the client has formally accepted the temporary recovery risk. After installation, the same block
-runs the complete repair/health check, so Step 8 requires no second command.
+The block asks whether two custodians' distinct public `.cer` files are ready. Answer `Y` to use the
+files at the shown paths; their private keys remain with the custodians. Answer `N` to install without
+custodians for now. That answer selects the bootstrap's explicit deferred-escrow mode automatically.
+After installation, the same block runs the complete repair/health check; there is no second command.
 
 ```powershell
 $servicePolicy = Get-ExecutionPolicy -Scope Process
@@ -504,7 +501,7 @@ foreach ($requiredFile in @(
   "release-signing-public.pem"
 )) {
   if (-not (Test-Path -LiteralPath (Join-Path $PWD $requiredFile) -PathType Leaf)) {
-    throw "Run Step 7 from the extracted bootstrap package directory; $requiredFile is missing."
+    throw "Run Step 3 from the extracted bootstrap package directory; $requiredFile is missing."
   }
 }
 
@@ -540,44 +537,45 @@ $bootstrapArguments = @{
   ReleasePublicKeyPath = (Join-Path $PWD "release-signing-public.pem")
 }
 
-$recoveryChoice = (Read-Host `
-  "Type ESCROW to use two custodian certificates, or DEFER for approved temporary deferral"
-).Trim().ToUpperInvariant()
-switch ($recoveryChoice) {
-  "ESCROW" {
-    $escrowDirectory = "C:\TermSheetKeyEscrow"
-    $escrowCertificates = @(
-      "C:\TermSheetKeyEscrow\custodian-a.cer",
-      "C:\TermSheetKeyEscrow\custodian-b.cer"
-    )
-    foreach ($certificate in $escrowCertificates) {
-      if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) {
-        throw "Escrow certificate not found: $certificate"
-      }
+do {
+  $custodiansReady = (Read-Host `
+    "Are two custodian public certificate files ready? Enter Y to use them or N to install without custodians for now [Y/N]"
+  ).Trim().ToLowerInvariant()
+  if ($custodiansReady -notin @("y", "yes", "n", "no")) {
+    Write-Warning "Answer Y or N."
+  }
+} until ($custodiansReady -in @("y", "yes", "n", "no"))
+
+if ($custodiansReady -in @("y", "yes")) {
+  $escrowDirectory = "C:\TermSheetKeyEscrow"
+  $escrowCertificates = @(
+    "C:\TermSheetKeyEscrow\custodian-a.cer",
+    "C:\TermSheetKeyEscrow\custodian-b.cer"
+  )
+  foreach ($certificate in $escrowCertificates) {
+    if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) {
+      throw "Escrow certificate not found: $certificate"
     }
-    $bootstrapArguments.EscrowDirectory = $escrowDirectory
-    $bootstrapArguments.EscrowCertificatePath = $escrowCertificates
   }
-  "DEFER" {
-    $bootstrapArguments.AllowDeferredEscrow = $true
-  }
-  default {
-    throw "Enter exactly ESCROW or DEFER. No installation change was made."
-  }
+  $bootstrapArguments.EscrowDirectory = $escrowDirectory
+  $bootstrapArguments.EscrowCertificatePath = $escrowCertificates
+} else {
+  Write-Warning "Installing without custodian escrow. Losing the server or key provider can make encrypted documents unreadable."
+  $bootstrapArguments.AllowDeferredEscrow = $true
 }
 
 $global:LASTEXITCODE = 0
 & .\bootstrap-windows-server.ps1 @bootstrapArguments
 if ($LASTEXITCODE -ne 0) {
-  throw "Installation did not complete. Apply the recovery action above and rerun Step 7."
+  throw "Installation did not complete. Apply the recovery action above and rerun Step 3."
 }
 
 $global:LASTEXITCODE = 0
 & .\repair-windows-server.ps1 -AcceptSafeRepairs
 if ($LASTEXITCODE -ne 0) {
-  throw "Post-install checks failed. Apply every recovery action above and rerun Step 7."
+  throw "Post-install checks failed. Apply every recovery action above and rerun Step 3."
 }
-Write-Host "Installation and Step 8 server checks passed."
+Write-Host "Installation and automatic server checks passed."
 ```
 
 This is not a recovery mechanism. Until escrow is added, losing the Windows machine or its key
@@ -591,16 +589,16 @@ What each required flag is:
 | `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
 | `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
 | `-PgBin` | Optional PostgreSQL 18 command-line-tools directory. Defaults to `C:\Program Files\PostgreSQL\18\bin`; use this when IT installed the approved tools elsewhere. Bootstrap records the absolute `pg_dump` and `pg_restore` paths for services and the SYSTEM updater task. |
-| `-PublicHostname` | Defaults to `termsheetextractor.local`. Step 7 puts the current LAN address in the employee installer; setup replaces older mappings for that hostname on each employee computer automatically. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
+| `-PublicHostname` | Defaults to `termsheetextractor.local`. Step 3 puts the current LAN address in the employee installer; setup replaces older mappings for that hostname on each employee computer automatically. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
 | `-ServiceUser` | The Windows account the application services run as. The block defaults to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
 | `-AllowDeferredEscrow` | Explicitly installs without recovery packages when custodians do not yet exist. It cannot be combined with either escrow argument and must be treated as a temporary, approved data-loss risk. |
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
-| `-ReleasePublicKeyPath` | The key authenticated in [Steps 2-5](#steps-2-5-download-authenticate-and-verify-the-bootstrap-package). |
+| `-ReleasePublicKeyPath` | The key authenticated automatically in [Step 2](#step-2-prepare-and-verify-the-bootstrap-package). |
 
 It's safe to run more than once, including from a newly downloaded bootstrap package. Treat a newer
-bootstrap as an authoritative maintenance installation: Step 7 does not return successfully until
+bootstrap as an authoritative maintenance installation: Step 3 does not return successfully until
 the signed release it names is active and healthy against the existing external database, document
 store, keys and configuration. Older release directories remain as rollback copies, so their
 presence under `C:\TermSheet\releases` does not identify the running version; the `current` junction
@@ -612,23 +610,23 @@ newer verified release and repoints only `current`; the old versioned release di
 preserved. On an initialized server, bootstrap keeps the active release serving only while it
 refreshes the external updater, service definitions, shortcuts, and employee handoff. It then waits
 synchronously for the refreshed signed updater to download, migrate, health-check and activate the
-newer release; a queued, failed or still-old result makes Step 7 fail rather than print installation
+newer release; a queued, failed or still-old result makes Step 3 fail rather than print installation
 success. Existing data, secrets, configuration, signing
 trust, and rollback releases remain intact. Bootstrap refuses to trust a different signing key on a
 rerun — key rotation is a separate, deliberate procedure the vendor will walk you through.
 
 If bootstrap stops, use the red **INSTALLATION STOPPED** summary rather than searching backward
 through the console. Keep its error message and transcript, apply the specific fix it proposes, and
-rerun the same Step 7 command. It resumes from verified state and recreates missing services or launcher files; do
+rerun the same Step 3 command. It resumes from verified state and recreates missing services or launcher files; do
 not delete `C:\TermSheet`, the data directory, or `%ProgramData%\WinnerZone\TermSheet` to retry.
 The updater stage is transaction-safe and is attempted up to three times before bootstrap stops.
 Each attempt verifies both enabled scheduled tasks and a readable versioned state file, so a transient
 ACL or Task Scheduler failure cannot be mistaken for a completed installation.
-After services and launchers are ready, Step 7 starts both tasks under their installed `SYSTEM`
+After services and launchers are ready, Step 3 starts both tasks under their installed `SYSTEM`
 identity. It waits for a successful fresh channel check (and any offered signed update), verifies the
 task exit results and updater state, then checks server readiness again. A large first update can keep
-Step 7 open while it downloads, backs up, and validates the release; do not close that window.
-Immediately before that maintenance update, Step 7 quiesces the extraction and backup workers. It
+Step 3 open while it downloads, backs up, and validates the release; do not close that window.
+Immediately before that maintenance update, Step 3 quiesces the extraction and backup workers. It
 uses the official Windows service-stop path and waits for NSSM to finish the registered shutdown
 sequence without imposing an additional installer timeout or killing worker processes. The workers
 are restarted after activation or restored if the installation fails, so background work cannot
@@ -647,7 +645,7 @@ Give each recovery holder their matching `.p7m` package, verify its SHA-256 valu
 `%ProgramData%\WinnerZone\TermSheet\installation-key.json`, and remove the temporary public
 certificate copies from the server.
 
-## Step 8: Confirm the installation
+## Automatic installation confirmation
 
 Four Windows services, all managed by NSSM, all set to restart automatically:
 
@@ -659,10 +657,10 @@ Four Windows services, all managed by NSSM, all set to restart automatically:
 | `TermSheetBackup` | Scheduled database/document backups |
 
 Logs for each are at `%ProgramData%\WinnerZone\TermSheet\logs\<ServiceName>.log` (and `.err.log` for
-errors). The Step 7 block already runs the repair helper after installation.
+errors). The Step 3 block already runs the repair helper after installation.
 It stops unless every required check passes. Do not copy or run another PowerShell block here;
-continue only after Step 7
-prints `Installation and Step 8 server checks passed.`
+continue only after Step 3
+prints `Installation and automatic server checks passed.`
 
 The helper checks elevation; the PostgreSQL and four application services and their automatic-start
 configuration; both scheduled updater tasks; updater JSON and active-release version agreement;
@@ -679,14 +677,16 @@ The audited `Client Files` set is `Term-Sheet-Extractor-Employee-Setup.exe`, its
 `Term Sheet Extractor - Server.url`, `server-url.txt`, `README.txt`, and
 `Term-Sheet-Client-Files.zip`.
 
-For ordinary version checks after Step 8 passes, use **Settings → System → Server version and
+For ordinary version checks after the automatic checks pass, use **Settings → System → Server version and
 updates**. If the helper reports a problem, follow its exact recovery action and inspect the named
 `.err.log`; do not continue to owner setup until the helper exits successfully.
 
 The bootstrap has already installed `Term Sheet Extractor - Server` in the current and all-users
-Desktop and Start menu locations, so it remains visible even when Step 7 ran elevated. Open it now
+Desktop and Start menu locations, so it remains visible even when Step 3 ran elevated. Open it now
 and confirm the sign-in page loads. This is the supported way to
 launch the UI directly from the server computer, including a localhost-only installation.
+
+## Step 4: Finish setup in the interface
 
 On that localhost sign-in page, choose **Developer access**. This provisions and signs in the sole
 installation owner through the server's loopback-only owner door. In **Settings → Members**, create
@@ -706,7 +706,7 @@ In **Settings**, enter approved provider credentials under **API keys**. The def
 store persists those keys without exposing or editing `server.env`. Employee computers cannot use
 Developer access; they use the staff authentication configured by the owner.
 
-## Step 9: Verify the mandatory combined employee installer
+## Employee installer handoff
 
 `C:\TermSheet\Client Files\Term-Sheet-Client-Files.zip` is the employee handoff. It contains one
 Tauri NSIS executable—`Term-Sheet-Extractor-Employee-Setup.exe`—with both employee choices:
@@ -725,12 +725,13 @@ supplies a generated SCRAM database credential, and opens the UI. Later launches
 private cluster automatically; closing the launcher stops it. A release is blocked unless this exact
 automatic initialization passes against the bundled binaries and schema.
 
-Before distribution, compare the executable with
-`Term-Sheet-Extractor-Employee-Setup.exe.sha256`. Keep `server-url.txt` beside the installer when
-running setup: the installer copies this installation-specific server address beside the installed
-executable automatically. IT can deploy the same file there later when retargeting is required. Do
-not copy `server.env`, `ProgramData\WinnerZone\TermSheet\config`, or any server secret to an employee
-computer.
+The Step 3 health check already compares the executable with
+`Term-Sheet-Extractor-Employee-Setup.exe.sha256` and refuses to finish if the handoff is incomplete or
+does not match. No one needs to compute or enter that hash manually. Keep `server-url.txt` beside the
+installer when running setup: the installer copies this installation-specific server address beside
+the installed executable automatically. IT can deploy the same file there later when retargeting is
+required. Do not copy `server.env`, `ProgramData\WinnerZone\TermSheet\config`, or any server secret to
+an employee computer.
 
 Local mode is intentionally separate from the company's book. It does not synchronize, cannot make
 central maker/checker approvals, and uses self-review labels. To move work into the company book,
@@ -813,8 +814,8 @@ $localLauncher = "C:\TermSheet\Client Files\Term Sheet Extractor - Server.url"
 if (Test-Path -LiteralPath $localLauncher) { Start-Process $localLauncher }
 ```
 
-If PostgreSQL 18 is missing, reinstall PostgreSQL 18 and rerun Step 7. If a Term Sheet
-service, updater task, or launcher file is missing, rerun Step 7 with the same values. Bootstrap
+If PostgreSQL 18 is missing, reinstall PostgreSQL 18 and rerun Step 3. If a Term Sheet
+service, updater task, or launcher file is missing, rerun Step 3 with the same values. Bootstrap
 preserves the pinned signing key, installed release, data, and existing authentication secret.
 
 ### Stopping the server for NSSM or tool maintenance
@@ -822,7 +823,7 @@ preserves the pinned signing key, installed release, data, and existing authenti
 An idle `TermSheetBackup` does not imply a backup is running. Older installations gave its
 PowerShell wrapper a 30-minute NSSM console-stop timeout, which can leave the service in
 `STOP_PENDING` while it prints output. Current releases handle NSSM's Windows `CTRL+BREAK` signal
-directly so idle processes exit promptly, and current Step 7 also reduces the forced-stop fallback
+directly so idle processes exit promptly, and current Step 3 also reduces the forced-stop fallback
 to one minute. To stop all NSSM-hosted Term Sheet services and prevent the updater from restarting
 them, use elevated PowerShell:
 
@@ -854,7 +855,7 @@ Get-Service -Name $serviceNames
 ```
 
 All four must show `Stopped` before replacing `C:\tools\nssm.exe`. PostgreSQL is deliberately not
-stopped. After maintenance, rerun Step 7 (preferred, because it reapplies current service settings),
+stopped. After maintenance, rerun Step 3 (preferred, because it reapplies current service settings),
 or start the four services and re-enable both scheduled tasks.
 
 If the browser does not load, confirm the application answers on loopback before debugging DNS or
