@@ -284,18 +284,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.12/term-sheet-bootstrap-0.3.12.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.12/term-sheet-bootstrap-0.3.12.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.13/term-sheet-bootstrap-0.3.13.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.13/term-sheet-bootstrap-0.3.13.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.12-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.12.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.13-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.13.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.12"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.13"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -786,12 +786,20 @@ it as a relative directory beneath the current VS Code or `dist` folder.
 
 | Field | Meaning |
 | --- | --- |
-| `status` | What the updater is doing right now: `idle` (nothing to do), `checking`, `downloading`, `staging`, `snapshotting` (taking a pre-update backup), `activating`, `rolling-back`, or `failed`. |
+| `status` | What the updater is doing right now: `idle` (nothing to do), `checking`, `downloading`, `staging`, `snapshotting` (taking a pre-update backup), `activating`, `rolling-back`, `blocked`, or `failed`. |
 | `installedVersion` | The version currently serving traffic. |
 | `previousVersion` | What was running before the last successful update — the rollback target if needed. |
 | `blockedVersion` | A version the updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version again; a newer signed release is required. If this is set, contact the vendor — this generally means a release needs a fix, not that anything is wrong with your server. |
 | `activeReleaseUnhealthy` | If `true`, the currently active release failed its own health checks and an automatic rollback wasn't possible (most often because a database migration can't safely run backwards). This is the one status worth paging someone over — the server may be degraded and needs the vendor's attention, ideally restored from the backup noted in `lastSuccessfulUpdateAt`. |
 | `lastCheckedAt`, `lastSuccessfulUpdateAt`, `lastFailureAt` | Timestamps, for confirming the updater is actually running on schedule. |
+
+`blocked` is not a stale download cache: the channel manifest is fetched with cache revalidation and
+verified on every check. The updater retains the original `failureReason`, `lastFailureAt` and
+`rollbackPerformed` evidence while holding the exact failed version, writes the reason to stderr and
+returns a nonzero scheduled-task result. Do not delete the state file or reinstall the server. Once
+the vendor publishes a corrected, higher signed version, the existing
+scheduled updater evaluates it as a new candidate and installs it through the normal backup and
+health gates; a successful activation clears the obsolete block automatically.
 
 If you gave `-UpdateStatusWebhookUri` at install time, every status change is also posted there
 automatically — useful for wiring into existing monitoring rather than polling the file above.
