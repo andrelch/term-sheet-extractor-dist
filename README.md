@@ -284,18 +284,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.13/term-sheet-bootstrap-0.3.13.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.13/term-sheet-bootstrap-0.3.13.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.15/term-sheet-bootstrap-0.3.15.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.15/term-sheet-bootstrap-0.3.15.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.13-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.13.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.15-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.15.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.13"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.15"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -473,109 +473,39 @@ automatically; do not create or edit `server.env` first.
 
 The installer prints the phase and total elapsed time whenever it begins work or is still waiting.
 It also records the complete session in
-`%ProgramData%\WinnerZone\TermSheet\installation-logs\bootstrap-<date>-<time>.log`. If installation
+`%ProgramData%\WinnerZone\TermSheet\installation-logs\bootstrap-<timestamp>-<operation>-<attempt>.log`. If installation
 stops, the last screen clearly identifies the failed phase, the exact error, the script location,
 the transcript path, and the service-log directory. Completed phases are retained, so leave the
 window open, correct the reported condition, and rerun the same block. Do not delete an installation
 directory to retry. When requesting support, send the newest installation transcript and only the
 named `.err.log`; neither file should contain the password entered into the secure credential dialog.
 
-The bootstrap maintains `%ProgramData%\WinnerZone\TermSheet\installation\installation-state.json`
-as an atomic installation journal. A failed run records its exact phase, stable `TSE-*` diagnostic
-code, transcript, and safe-resume status. Correct the named condition and rerun this same block.
+The wrapper maintains `%ProgramData%\WinnerZone\TermSheet\installation\installation-state.json`
+as an atomic schema-3 journal. It records the operation, immutable attempt history, exact baseline
+release identity, health evidence, consent decision, one-shot request ID, failure policy and
+transcripts. Only one Step 3 session can hold the installation lock at a time.
 
 The block asks whether two custodians' distinct public `.cer` files are ready. Answer `Y` to use the
 files at the shown paths; their private keys remain with the custodians. Answer `N` to install without
 custodians for now. That answer selects the bootstrap's explicit deferred-escrow mode automatically.
-After installation, the same block runs the complete repair/health check; there is no second command.
+The packaged installer retains every answer for one automatic recovery attempt and runs the complete
+repair/health check; there is no second command. When an operational failure is eligible for a
+software reinstall, it explains exactly what will be replaced and waits for explicit approval.
+That approval creates one request which the updater marks consumed before downloading anything. A
+failure, restart or scheduled-task rerun cannot reuse it; another attempt requires fresh approval.
 
 ```powershell
 $servicePolicy = Get-ExecutionPolicy -Scope Process
 if ($servicePolicy -ne "Bypass") { Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force }
 Get-ChildItem -LiteralPath $PWD -Recurse -File | Unblock-File
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
-
-foreach ($requiredFile in @(
-  "bootstrap-windows-server.ps1",
-  "repair-windows-server.ps1",
-  "release-signing-public.pem"
-)) {
-  if (-not (Test-Path -LiteralPath (Join-Path $PWD $requiredFile) -PathType Leaf)) {
-    throw "Run Step 3 from the extracted bootstrap package directory; $requiredFile is missing."
-  }
-}
-
-$serviceUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-do {
-  try {
-    $serviceSid = (New-Object Security.Principal.NTAccount($serviceUser)).Translate([Security.Principal.SecurityIdentifier]).Value
-    $serviceCredential = Get-Credential -UserName $serviceUser `
-      -Message "Log in to the Windows account that will run the Term Sheet services"
-    if (-not $serviceCredential) { Write-Warning "No credential was entered." }
-  } catch {
-    Write-Warning "'$serviceUser' did not resolve: $($_.Exception.Message)"
-    $serviceUser = Read-Host "Enter COMPUTERNAME\username or DOMAIN\username, or press Enter to stop"
-    if (-not $serviceUser) { return }
-  }
-} until ($serviceSid -and $serviceCredential)
-
-do {
-  $publicHostname = Read-Host "Enter the employee DNS hostname, or press Enter for termsheetextractor.local"
-  if (-not $publicHostname) { $publicHostname = "termsheetextractor.local" }
-  $hostnameIsValid = $publicHostname -match '^[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$' -and -not $publicHostname.Contains('..')
-  if (-not $hostnameIsValid) { Write-Warning "That is not a valid DNS hostname. Try again or press Enter for termsheetextractor.local." }
-} until ($hostnameIsValid)
-
-$bootstrapArguments = @{
-  ApplicationRoot = "C:\TermSheet"
-  NssmPath = "C:\tools\nssm.exe"
-  CaddyPath = "C:\tools\caddy.exe"
-  PublicHostname = $publicHostname
-  ServiceUser = $serviceUser
-  ServiceCredential = $serviceCredential
-  ManifestUri = $manifestUri
-  ReleasePublicKeyPath = (Join-Path $PWD "release-signing-public.pem")
-}
-
-do {
-  $custodiansReady = (Read-Host `
-    "Are two custodian public certificate files ready? Enter Y to use them or N to install without custodians for now [Y/N]"
-  ).Trim().ToLowerInvariant()
-  if ($custodiansReady -notin @("y", "yes", "n", "no")) {
-    Write-Warning "Answer Y or N."
-  }
-} until ($custodiansReady -in @("y", "yes", "n", "no"))
-
-if ($custodiansReady -in @("y", "yes")) {
-  $escrowDirectory = "C:\TermSheetKeyEscrow"
-  $escrowCertificates = @(
-    "C:\TermSheetKeyEscrow\custodian-a.cer",
-    "C:\TermSheetKeyEscrow\custodian-b.cer"
-  )
-  foreach ($certificate in $escrowCertificates) {
-    if (-not (Test-Path -LiteralPath $certificate -PathType Leaf)) {
-      throw "Escrow certificate not found: $certificate"
-    }
-  }
-  $bootstrapArguments.EscrowDirectory = $escrowDirectory
-  $bootstrapArguments.EscrowCertificatePath = $escrowCertificates
-} else {
-  Write-Warning "Installing without custodian escrow. Losing the server or key provider can make encrypted documents unreadable."
-  $bootstrapArguments.AllowDeferredEscrow = $true
-}
-
 $global:LASTEXITCODE = 0
-& .\bootstrap-windows-server.ps1 @bootstrapArguments
-if ($LASTEXITCODE -ne 0) {
-  throw "Installation did not complete. Apply the recovery action above and rerun Step 3."
+& .\install-windows-server.ps1 -ManifestUri $manifestUri
+if ($LASTEXITCODE -eq 2) {
+  Write-Warning "Step 3 is degraded: the verified prior version is healthy, but the reinstall still needs attention."
+  return
 }
-
-$global:LASTEXITCODE = 0
-& .\repair-windows-server.ps1 -AcceptSafeRepairs
-if ($LASTEXITCODE -ne 0) {
-  throw "Post-install checks failed. Apply every recovery action above and rerun Step 3."
-}
-Write-Host "Installation and automatic server checks passed."
+if ($LASTEXITCODE -ne 0) { throw "Installation did not complete. Use the recovery action printed above." }
 ```
 
 This is not a recovery mechanism. Until escrow is added, losing the Windows machine or its key
@@ -616,9 +546,18 @@ trust, and rollback releases remain intact. Bootstrap refuses to trust a differe
 rerun — key rotation is a separate, deliberate procedure the vendor will walk you through.
 
 If bootstrap stops, use the red **INSTALLATION STOPPED** summary rather than searching backward
-through the console. Keep its error message and transcript, apply the specific fix it proposes, and
-rerun the same Step 3 command. It resumes from verified state and recreates missing services or launcher files; do
-not delete `C:\TermSheet`, the data directory, or `%ProgramData%\WinnerZone\TermSheet` to retry.
+through the console. For an operational failure, Step 3 offers one automatic software reinstall and
+continues only after explicit approval. It redownloads signed application software and recreates
+services, tasks, the proxy and launchers while preserving the database, documents, keys,
+configuration, backups and logs. Trust, encryption, snapshot and destructive data-safety failures
+are never bypassed. Do not delete `C:\TermSheet`, the data directory, or
+`%ProgramData%\WinnerZone\TermSheet` to retry.
+
+Before attempting either install, Step 3 records the exact active release directory and marker hash,
+its core health, updater/task/proxy/handoff files and service state. A failed reinstall restores that
+software baseline before degraded status is considered. Degraded status is allowed only when the
+same directory and marker—not merely the same version number—passes structured HTTP and HTTPS,
+database migration and both worker checks.
 The updater stage is transaction-safe and is attempted up to three times before bootstrap stops.
 Each attempt verifies both enabled scheduled tasks and a readable versioned state file, so a transient
 ACL or Task Scheduler failure cannot be mistaken for a completed installation.
@@ -789,17 +728,18 @@ it as a relative directory beneath the current VS Code or `dist` folder.
 | `status` | What the updater is doing right now: `idle` (nothing to do), `checking`, `downloading`, `staging`, `snapshotting` (taking a pre-update backup), `activating`, `rolling-back`, `blocked`, or `failed`. |
 | `installedVersion` | The version currently serving traffic. |
 | `previousVersion` | What was running before the last successful update — the rollback target if needed. |
-| `blockedVersion` | A version the updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version again; a newer signed release is required. If this is set, contact the vendor — this generally means a release needs a fix, not that anything is wrong with your server. |
+| `blockedVersion` | A version the unattended updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version automatically. Prefer a newer corrected signed release; an administrator may instead run the current Step 3 package and explicitly approve its software reinstall. |
 | `activeReleaseUnhealthy` | If `true`, the currently active release failed its own health checks and an automatic rollback wasn't possible (most often because a database migration can't safely run backwards). This is the one status worth paging someone over — the server may be degraded and needs the vendor's attention, ideally restored from the backup noted in `lastSuccessfulUpdateAt`. |
 | `lastCheckedAt`, `lastSuccessfulUpdateAt`, `lastFailureAt` | Timestamps, for confirming the updater is actually running on schedule. |
 
 `blocked` is not a stale download cache: the channel manifest is fetched with cache revalidation and
 verified on every check. The updater retains the original `failureReason`, `lastFailureAt` and
 `rollbackPerformed` evidence while holding the exact failed version, writes the reason to stderr and
-returns a nonzero scheduled-task result. Do not delete the state file or reinstall the server. Once
-the vendor publishes a corrected, higher signed version, the existing
-scheduled updater evaluates it as a new candidate and installs it through the normal backup and
-health gates; a successful activation clears the obsolete block automatically.
+returns a nonzero scheduled-task result. Do not delete the state file. Once the vendor publishes a
+corrected, higher signed version, the existing scheduled updater evaluates it as a new candidate and
+installs it through the normal backup and health gates. If the operator instead approves Step 3's
+software reinstall, the same signed version is redownloaded and passes those gates again. A
+successful activation clears the obsolete block automatically.
 
 If you gave `-UpdateStatusWebhookUri` at install time, every status change is also posted there
 automatically — useful for wiring into existing monitoring rather than polling the file above.
