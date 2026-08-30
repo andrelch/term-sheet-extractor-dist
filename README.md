@@ -284,18 +284,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.15/term-sheet-bootstrap-0.3.15.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.15/term-sheet-bootstrap-0.3.15.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.17/term-sheet-bootstrap-0.3.17.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.17/term-sheet-bootstrap-0.3.17.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.15-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.15.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.17-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.17.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.15"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.17"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -545,26 +545,57 @@ success. Existing data, secrets, configuration, signing
 trust, and rollback releases remain intact. Bootstrap refuses to trust a different signing key on a
 rerun — key rotation is a separate, deliberate procedure the vendor will walk you through.
 
+When a higher verified bootstrap finds an updater transaction that is provably still at `staged`,
+`quiesced`, or `snapshotting`, it offers a **safe pre-migration takeover**. After operator approval,
+the bootstrap replaces the external updater with its bundled, hashed copy, verifies both scheduled
+task actions, records provenance, restores the unchanged baseline, and retries every normal snapshot,
+migration and health gate. It never takes over a transaction that reached migration or whose baseline
+identity changed. This is the supported recovery for the 0.3.15 `Invalid JSON primitive: WARNING`
+snapshot-output bug and similar failures left by older updaters.
+
 If bootstrap stops, use the red **INSTALLATION STOPPED** summary rather than searching backward
 through the console. For an operational failure, Step 3 offers one automatic software reinstall and
 continues only after explicit approval. It redownloads signed application software and recreates
 services, tasks, the proxy and launchers while preserving the database, documents, keys,
-configuration, backups and logs. Trust, encryption, snapshot and destructive data-safety failures
-are never bypassed. Do not delete `C:\TermSheet`, the data directory, or
-`%ProgramData%\WinnerZone\TermSheet` to retry.
+configuration, backups and logs.
+
+Snapshot, schema/database-state, or key-custody failures may instead offer an
+**archive-then-empty reset**. This requires typing the displayed operation-specific confirmation.
+The helper creates a redacted support bundle and recovery manifest, renames the existing PostgreSQL
+database to a timestamped `term_sheet_extractor_retired_*` name, archives the application, state and
+document-store paths, and installs a new empty database and document store. PostgreSQL 18, its Windows
+service, and the existing `postgres`, `term_sheet_extractor_admin`, and `term_sheet_app` accounts and
+passwords are not removed or changed. Signing-key, release-signature/archive, unsafe-path, BitLocker,
+concurrency, and unverifiable-bootstrap failures never offer this reset; a reset cannot make an
+untrusted package safe. Do not delete `C:\TermSheet`, the data directory, or
+`%ProgramData%\WinnerZone\TermSheet` manually.
+
+An interrupted snapshot uses an operation-bound directory under
+`%ProgramData%\WinnerZone\TermSheet\pre-migration-snapshots`. Incomplete data is removed only when
+its marker matches the interrupted operation; a completed, verified snapshot is preserved. After
+correcting the package or PostgreSQL problem, rerun the exact same Step 3 command. The updater
+recovers the pre-migration transaction, restores the previously active release and services, and
+starts a fresh operation without applying a migration from the failed attempt.
 
 Before attempting either install, Step 3 records the exact active release directory and marker hash,
 its core health, updater/task/proxy/handoff files and service state. A failed reinstall restores that
 software baseline before degraded status is considered. Degraded status is allowed only when the
 same directory and marker—not merely the same version number—passes structured HTTP and HTTPS,
 database migration and both worker checks.
-The updater stage is transaction-safe and is attempted up to three times before bootstrap stops.
-Each attempt verifies both enabled scheduled tasks and a readable versioned state file, so a transient
-ACL or Task Scheduler failure cannot be mistaken for a completed installation.
+The updater stage is transaction-safe. Bootstrap may retry transient download or preflight failures,
+but a pre-migration snapshot failure runs once and is recorded as non-retryable; repeating the same
+dump cannot repair invalid evidence, a missing tool, or a watchdog expiration. Each attempt verifies
+both enabled scheduled tasks and a readable versioned state file, so a transient ACL or Task
+Scheduler failure cannot be mistaken for a completed installation.
 After services and launchers are ready, Step 3 starts both tasks under their installed `SYSTEM`
 identity. It waits for a successful fresh channel check (and any offered signed update), verifies the
 task exit results and updater state, then checks server readiness again. A large first update can keep
-Step 3 open while it downloads, backs up, and validates the release; do not close that window.
+Step 3 open while it downloads, backs up, and validates the release; do not close that window. While
+the database snapshot runs, the periodic message shows its phase, processed bytes, elapsed time, and
+last byte-or-phase activity. The snapshot is terminated before migration after three minutes without
+byte progress or 30 minutes total. Bootstrap allows the snapshot process 60 seconds to report and
+clean up after either deadline, then safely stops it only if the transaction still proves migration
+has not begun.
 Immediately before that maintenance update, Step 3 quiesces the extraction and backup workers. It
 uses the official Windows service-stop path and waits for NSSM to finish the registered shutdown
 sequence without imposing an additional installer timeout or killing worker processes. The workers
@@ -731,6 +762,17 @@ it as a relative directory beneath the current VS Code or `dist` folder.
 | `blockedVersion` | A version the unattended updater tried and rejected (failed its health check, or a rollback failed). It will not retry this exact version automatically. Prefer a newer corrected signed release; an administrator may instead run the current Step 3 package and explicitly approve its software reinstall. |
 | `activeReleaseUnhealthy` | If `true`, the currently active release failed its own health checks and an automatic rollback wasn't possible (most often because a database migration can't safely run backwards). This is the one status worth paging someone over — the server may be degraded and needs the vendor's attention, ideally restored from the backup noted in `lastSuccessfulUpdateAt`. |
 | `lastCheckedAt`, `lastSuccessfulUpdateAt`, `lastFailureAt` | Timestamps, for confirming the updater is actually running on schedule. |
+| `progressDetail`, `progressBytes`, `progressUpdatedAt` | Live detail for long-running work. During `snapshotting`, Step 3 reports the dump or verification phase, bytes processed and elapsed time every 15 seconds. These fields clear when the snapshot completes. |
+| `retryable` | `false` means repeating the same updater attempt cannot repair the failure. Step 3 stops after that task result instead of repeating the full download and snapshot cycle. Missing on older updater state, or `null`, leaves the existing guarded retry policy in control. |
+| `bootstrapMinimumVersion`, `updaterProvenanceSha256` | Identify the verified maintenance bootstrap that installed the external updater and the hash of its provenance manifest. A missing or changed manifest on a current installation stops the updater and requires rerunning the verified Step 3 package. |
+
+Pre-migration snapshots have two independent watchdogs. The managed defaults stop `pg_dump` after
+three minutes without byte progress and stop the complete snapshot after 30 minutes. Either failure
+happens before `prisma migrate deploy`, removes the incomplete snapshot directory, restores services
+when schema-aware recovery is not required, and records `TSE-STEP3-SNAPSHOT` with `retryable: false`.
+This recovery point is never bypassed. Correct the reported storage, PostgreSQL or sizing problem and
+rerun the same Step 3 command; completed installation phases and the previously active release remain
+preserved.
 
 `blocked` is not a stale download cache: the channel manifest is fetched with cache revalidation and
 verified on every check. The updater retains the original `failureReason`, `lastFailureAt` and
