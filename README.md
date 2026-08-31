@@ -218,18 +218,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.19/term-sheet-bootstrap-0.3.19.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.19/term-sheet-bootstrap-0.3.19.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.20/term-sheet-bootstrap-0.3.20.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.20/term-sheet-bootstrap-0.3.20.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.19-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.19.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.20-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.20.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.19"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.20"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -568,12 +568,39 @@ The installer accepts `-RecoveryParent` for installations whose managed roots sh
 volume; the recovery directory must be separate from every managed root. Mixed-volume managed
 roots require administrator-led recovery rather than an automatic copy/delete reset.
 
-If database retirement or file movement has started, a rerun refuses to overwrite the recovery
-journal. Keep the entire recovery directory and have the server administrator reconcile the
-manifest, archived files and retired database first. Do not delete the journal to force another
-reset. This also applies to an interrupted 0.3.17 reset whose outcome cannot be proven. A failed
-preflight with explicit evidence that neither database retirement nor file movement began can be
-retried after correcting its cause. PostgreSQL accounts, passwords and its service remain unchanged.
+Step 3 checks old metadata before running old software. Incomplete/failed installation journals,
+corrupt JSON, blocked updaters, unresolved schema transactions, missing release/key metadata, and
+changed signing-key pins now offer a **fresh empty installation** instead of permanently blocking
+the new bootstrap. Healthy installations continue through normal maintenance. Type the displayed
+`RESET TERM SHEET DATA ...` confirmation to proceed, or press Enter to leave the old journal and
+data unchanged. Use this only when an empty replacement is intended; restoring the old installation
+still requires reconciliation by the server administrator.
+
+To choose this path explicitly (including broken old keys, a changed old signing-key pin, or an
+unreadable legacy journal), use the **newly extracted bootstrap package**, outside all managed roots:
+
+```powershell
+.\install-windows-server.ps1 -ManifestUri $manifestUri -FreshInstall
+```
+
+Use the same trusted channel URL and any custom root/service options as your normal Step 3 command.
+The installer first verifies the signed channel using the new bootstrap's public key. Every new
+installation attempt preserves the old journal byte-for-byte as `installation-state.previous-<id>.json` beside the live journal,
+links it from the new journal and recovery manifest, and archives remaining application/data/configuration/
+secret files into a new recovery directory. Previous recovery directories and retired databases are
+never overwritten or deleted. If the live database was already retired, fresh install can proceed
+without renaming it again. Any live application database that remains is retired separately.
+
+The new installation uses the new package's signing-key pin and generates new local encryption
+keys; old keys and settings are not required or reused. **New keys cannot decrypt old documents,
+backups, or secrets.** Keep every old recovery directory and key envelope for possible recovery;
+reconfigure provider API keys and staff settings in the new application. Release/archive validation,
+new key custody, filesystem safety, exclusive installation, and final health checks still apply.
+PostgreSQL accounts, passwords and its service remain unchanged, so their existing credentials are
+still required. Nothing marks an unresolved old reset as successfully recovered.
+
+A failed preflight with evidence that neither database retirement nor file movement began can also
+be retried normally after correcting its cause. Never delete the journal to force another reset.
 
 ## Automatic installation confirmation
 
