@@ -160,119 +160,53 @@ startup, loopback binding, and ownership of pre-existing application objects in 
 
 ### Step 1.3: Install the remaining prerequisites
 
-Install [NSSM](https://nssm.cc/) and [Caddy](https://caddyserver.com/) from packages approved by your
-organization. Put their x64 executables at the following paths, or substitute the approved absolute
-paths in every later command. On a fresh server, the following elevated PowerShell installs the
-modern-Windows-compatible NSSM 2.24-101 x64 build and the latest stable Caddy x64 build. It verifies
-the NSSM digest published on its download page and Caddy's release-specific SHA-512 checksum before
-copying either executable. The block always downloads fresh archives. On an existing installation it
-stops every service whose executable path uses this NSSM copy, replaces both tools, and restarts only
-the services that were running beforehand. Expect a brief application outage while the files are
-replaced. If other applications share `C:\tools\nssm.exe`, schedule the command in an approved
-maintenance window because those services are restarted too.
+Obtain and extract the verified bootstrap ZIP first (the package preparation block in Step 2
+can also reuse a ZIP extracted on another computer). Run the prerequisite helper from that folder
+in elevated Windows PowerShell. Do not run machine preflight until these prerequisites are installed.
 
 ```powershell
-$toolsRoot = "C:\tools"
-$downloadRoot = Join-Path ([IO.Path]::GetTempPath()) `
-  ("term-sheet-prerequisites-" + [guid]::NewGuid().ToString("N"))
-New-Item -ItemType Directory -Path $toolsRoot, $downloadRoot -Force | Out-Null
-$nssmDestination = Join-Path $toolsRoot "nssm.exe"
-$caddyDestination = Join-Path $toolsRoot "caddy.exe"
-
-# NSSM 2.24-101 x64. Do not use the older 2.24 build on modern Windows Server.
-$nssmVersion = "2.24-101-g897c7ad"
-$nssmArchive = Join-Path $downloadRoot "nssm-$nssmVersion.zip"
-Invoke-WebRequest -Uri "https://nssm.cc/ci/nssm-$nssmVersion.zip" `
-  -OutFile $nssmArchive -UseBasicParsing -ErrorAction Stop
-$expectedNssmSha1 = "ca2f6782a05af85facf9b620e047b01271edd11d"
-$actualNssmSha1 = (Get-FileHash -LiteralPath $nssmArchive -Algorithm SHA1).Hash.ToLowerInvariant()
-if ($actualNssmSha1 -ne $expectedNssmSha1) {
-  throw "NSSM archive checksum mismatch; do not install it."
-}
-$nssmExtract = Join-Path $downloadRoot "nssm"
-Expand-Archive -LiteralPath $nssmArchive -DestinationPath $nssmExtract -ErrorAction Stop
-$newNssm = Join-Path $nssmExtract "nssm-$nssmVersion\win64\nssm.exe"
-
-# Latest stable Caddy x64, verified against its GitHub release checksums file.
-$caddyRelease = Invoke-RestMethod `
-  -Uri "https://api.github.com/repos/caddyserver/caddy/releases/latest" -ErrorAction Stop
-$caddyVersion = $caddyRelease.tag_name.TrimStart("v")
-$caddyAssetName = "caddy_${caddyVersion}_windows_amd64.zip"
-$caddyAsset = $caddyRelease.assets |
-  Where-Object name -eq $caddyAssetName | Select-Object -First 1
-$caddyChecksums = $caddyRelease.assets |
-  Where-Object name -eq "caddy_${caddyVersion}_checksums.txt" | Select-Object -First 1
-if (-not $caddyAsset -or -not $caddyChecksums) {
-  throw "The latest Caddy release does not contain the expected Windows x64 assets."
-}
-$caddyArchive = Join-Path $downloadRoot $caddyAssetName
-$caddyChecksumsPath = Join-Path $downloadRoot $caddyChecksums.name
-Invoke-WebRequest -Uri $caddyAsset.browser_download_url `
-  -OutFile $caddyArchive -UseBasicParsing -ErrorAction Stop
-Invoke-WebRequest -Uri $caddyChecksums.browser_download_url `
-  -OutFile $caddyChecksumsPath -UseBasicParsing -ErrorAction Stop
-$checksumLine = Get-Content -LiteralPath $caddyChecksumsPath |
-  Where-Object { $_ -match "^[0-9a-fA-F]{128}\s+\*?$([regex]::Escape($caddyAssetName))$" } |
-  Select-Object -First 1
-if (-not $checksumLine) { throw "A valid SHA-512 entry for the Caddy archive was not found." }
-$expectedCaddySha512 = ($checksumLine -split "\s+")[0].ToLowerInvariant()
-$actualCaddySha512 = (Get-FileHash -LiteralPath $caddyArchive -Algorithm SHA512).Hash.ToLowerInvariant()
-if ($actualCaddySha512 -ne $expectedCaddySha512) {
-  throw "Caddy archive checksum mismatch; do not install it."
-}
-$caddyExtract = Join-Path $downloadRoot "caddy"
-Expand-Archive -LiteralPath $caddyArchive -DestinationPath $caddyExtract -ErrorAction Stop
-$newCaddy = Join-Path $caddyExtract "caddy.exe"
-
-# Windows locks an NSSM executable while any service hosted by that copy is running.
-# Download and verify everything first, then keep the service outage as short as possible.
-$escapedNssmPath = [regex]::Escape([IO.Path]::GetFullPath($nssmDestination))
-$affectedServices = @(
-  Get-CimInstance Win32_Service -ErrorAction Stop |
-    Where-Object { $_.PathName -match "(?i)$escapedNssmPath(?:`"|\s|$)" }
-)
-$servicesToRestart = @($affectedServices | Where-Object State -eq "Running")
-
-try {
-  foreach ($service in $servicesToRestart) {
-    Write-Host "Stopping $($service.Name) so the prerequisite executables can be replaced..."
-    Stop-Service -Name $service.Name -Force -ErrorAction Stop
-  }
-  foreach ($service in $servicesToRestart) {
-    (Get-Service -Name $service.Name -ErrorAction Stop).WaitForStatus(
-      [System.ServiceProcess.ServiceControllerStatus]::Stopped,
-      [TimeSpan]::FromSeconds(60)
-    )
-  }
-
-  Copy-Item -LiteralPath $newNssm -Destination $nssmDestination -Force -ErrorAction Stop
-  Copy-Item -LiteralPath $newCaddy -Destination $caddyDestination -Force -ErrorAction Stop
-  Unblock-File $nssmDestination, $caddyDestination -ErrorAction Stop
-}
-finally {
-  foreach ($service in $servicesToRestart) {
-    if ((Get-Service -Name $service.Name -ErrorAction SilentlyContinue).Status -ne "Running") {
-      Write-Host "Restarting $($service.Name)..."
-      Start-Service -Name $service.Name -ErrorAction Continue
-    }
-  }
-}
-
-# Verify both installed tools before removing the temporary downloads.
-Get-Item $nssmDestination, $caddyDestination
-& $nssmDestination version
-if ($LASTEXITCODE -ne 0) { throw "NSSM version check failed." }
-& $caddyDestination version
-if ($LASTEXITCODE -ne 0) { throw "Caddy version check failed." }
-
-Remove-Item -LiteralPath $downloadRoot -Recurse -Force -ErrorAction SilentlyContinue
+.\install-windows-prerequisites.ps1
 ```
 
-NSSM 2.24 prints a plausible version inside its error/usage banner but exits with code 1 and fails
-the later checks. The supported build must return exit code 0 for `version`; the installation block
-above verifies both tools before it finishes. The service identity and credential are collected once,
-immediately before installation in Step 3, so they do not have to be retained while completing the
-package checks.
+This installs the modern-Windows-compatible NSSM 2.24-101 x64 build and the latest stable Caddy
+x64 build into `C:\tools`. Both archives are verified before any service is stopped: NSSM uses
+its published SHA-1 digest and Caddy uses its release-specific SHA-512 checksum. Both executables
+must pass a version check before replacing existing tools. Running services sharing this NSSM
+copy are briefly stopped and restarted; schedule a maintenance window if other applications use it.
+Old binaries and staging files are retained at the printed recovery path.
+
+Online requests have a 60-second timeout and at most three attempts. If `api.github.com` is blocked
+but GitHub release downloads work, pass an organization-approved stable version explicitly:
+
+```powershell
+$caddyVersion = Read-Host "Enter the approved Caddy version (x.y.z)"
+.\install-windows-prerequisites.ps1 -CaddyVersion $caddyVersion
+```
+
+If the server has no approved GitHub access, download the following on a connected, trusted computer
+and transfer them together into a dedicated folder on an existing drive:
+
+- `nssm-2.24-101-g897c7ad.zip` from the [official NSSM download page](https://nssm.cc/download).
+- `caddy_VERSION_windows_amd64.zip` and `caddy_VERSION_checksums.txt` from the same approved
+  [official Caddy release](https://github.com/caddyserver/caddy/releases).
+
+Authenticate the checksum file through your organization's trusted download/transfer process;
+a checksum copied alongside an untrusted archive does not establish authenticity.
+
+```powershell
+$offlineDirectory = Read-Host "Enter the absolute folder containing the approved archives and checksums"
+$caddyVersion = Read-Host "Enter the matching Caddy version (x.y.z)"
+.\install-windows-prerequisites.ps1 -OfflineDirectory $offlineDirectory -CaddyVersion $caddyVersion
+```
+
+Offline mode makes no network requests and applies the same checksum/version checks. It never
+falls back to an unverified executable. Missing files, invalid versions and checksum mismatches
+stop before replacing tools. Correct DNS/proxy/firewall policy with the network administrator;
+do not disable TLS validation or replace the server's DNS settings blindly. This offline option
+covers NSSM/Caddy only; the later signed application-release workflow still needs its documented access.
+
+NSSM stable 2.24 is not supported: its version command exits with code 1 on modern Windows.
+The service identity and credential are collected once, immediately before installation in Step 3.
 
 ## Step 2: Prepare and verify the bootstrap package
 
@@ -284,18 +218,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.17/term-sheet-bootstrap-0.3.17.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.17/term-sheet-bootstrap-0.3.17.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.18/term-sheet-bootstrap-0.3.18.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.18/term-sheet-bootstrap-0.3.18.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.17-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.17.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.18-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.18.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.17"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.18"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -606,14 +540,40 @@ When the two public certificates become available, add escrow to the existing ke
 PowerShell session. This command does not rotate the key or rewrite encrypted documents:
 
 ```powershell
+$escrowDirectory = Read-Host "Enter the absolute escrow directory on your connected custody drive/share"
 .\add-server-key-escrow.ps1 `
-  -EscrowDirectory E:\TermSheetKeyEscrow\initial `
+  -EscrowDirectory $escrowDirectory `
   -EscrowCertificatePath C:\KeyBootstrap\custodian-a.cer,C:\KeyBootstrap\custodian-b.cer
 ```
 
 Give each recovery holder their matching `.p7m` package, verify its SHA-256 value against
 `%ProgramData%\WinnerZone\TermSheet\installation-key.json`, and remove the temporary public
 certificate copies from the server.
+
+The escrow location is an explicit custody decision: no `E:` drive is assumed and a missing drive
+never silently falls back to the server disk. Connect the approved custody drive/share first.
+Path and write checks run before the existing document key is decrypted. If a prior attempt left
+CMS files but did not finish updating the marker, retain those files and use a new empty destination
+or reconcile the prior attempt; do not regenerate the document key.
+
+### If archive reset stops partway through
+
+The recovery manifest path is printed before services stop and persisted in the installation journal.
+It records the database retirement stage and each source/destination before and after a rename.
+Failures report the exact stage and paths. A missing tool, inaccessible drive, overlapping root or
+unsupported cross-volume archive is rejected before database retirement. Directory archives use
+same-volume renames without traversing release junctions; archived release-link targets are recorded
+in the manifest and the links detached, so they cannot point back into a new live installation.
+The installer accepts `-RecoveryParent` for installations whose managed roots share a different
+volume; the recovery directory must be separate from every managed root. Mixed-volume managed
+roots require administrator-led recovery rather than an automatic copy/delete reset.
+
+If database retirement or file movement has started, a rerun refuses to overwrite the recovery
+journal. Keep the entire recovery directory and have the server administrator reconcile the
+manifest, archived files and retired database first. Do not delete the journal to force another
+reset. This also applies to an interrupted 0.3.17 reset whose outcome cannot be proven. A failed
+preflight with explicit evidence that neither database retirement nor file movement began can be
+retried after correcting its cause. PostgreSQL accounts, passwords and its service remain unchanged.
 
 ## Automatic installation confirmation
 
