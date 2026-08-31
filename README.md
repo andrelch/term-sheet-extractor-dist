@@ -168,20 +168,17 @@ in elevated Windows PowerShell. Do not run machine preflight until these prerequ
 .\install-windows-prerequisites.ps1
 ```
 
-This installs the modern-Windows-compatible NSSM 2.24-101 x64 build and the latest stable Caddy
+This installs the modern-Windows-compatible NSSM 2.24-101 x64 build and the release-pinned Caddy
 x64 build into `C:\tools`. Both archives are verified before any service is stopped: NSSM uses
 its published SHA-1 digest and Caddy uses its release-specific SHA-512 checksum. Both executables
 must pass a version check before replacing existing tools. Running services sharing this NSSM
 copy are briefly stopped and restarted; schedule a maintenance window if other applications use it.
 Old binaries and staging files are retained at the printed recovery path.
 
-Online requests have a 60-second timeout and at most three attempts. If `api.github.com` is blocked
-but GitHub release downloads work, pass an organization-approved stable version explicitly:
-
-```powershell
-$caddyVersion = Read-Host "Enter the approved Caddy version (x.y.z)"
-.\install-windows-prerequisites.ps1 -CaddyVersion $caddyVersion
-```
+Online requests have a 60-second timeout and at most three attempts. The verified bootstrap includes
+`prerequisites.json` with the selected stable Caddy version and its SHA-512 checksum. The server does
+not call GitHub's releases API and does not ask you to type a version. `-CaddyVersion` remains an
+optional administrator override; it is not required for normal installation.
 
 If the server has no approved GitHub access, download the following on a connected, trusted computer
 and transfer them together into a dedicated folder on an existing drive:
@@ -195,11 +192,11 @@ a checksum copied alongside an untrusted archive does not establish authenticity
 
 ```powershell
 $offlineDirectory = Read-Host "Enter the absolute folder containing the approved archives and checksums"
-$caddyVersion = Read-Host "Enter the matching Caddy version (x.y.z)"
-.\install-windows-prerequisites.ps1 -OfflineDirectory $offlineDirectory -CaddyVersion $caddyVersion
+.\install-windows-prerequisites.ps1 -OfflineDirectory $offlineDirectory
 ```
 
-Offline mode makes no network requests and applies the same checksum/version checks. It never
+Offline mode selects the highest stable version with a complete archive/checksum pair, makes no
+network requests, and applies the same checksum/version checks. It never
 falls back to an unverified executable. Missing files, invalid versions and checksum mismatches
 stop before replacing tools. Correct DNS/proxy/firewall policy with the network administrator;
 do not disable TLS validation or replace the server's DNS settings blindly. This offline option
@@ -218,18 +215,18 @@ then authenticates the signing key, checks the machine, and verifies the signed 
 making you switch between separate command blocks.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.20/term-sheet-bootstrap-0.3.20.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.20/term-sheet-bootstrap-0.3.20.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.21/term-sheet-bootstrap-0.3.21.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.21/term-sheet-bootstrap-0.3.21.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.20-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.20.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.21-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.21.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.20"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.21"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -248,7 +245,7 @@ if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathTy
     } catch {
       Remove-Item -LiteralPath "$bootstrapZip.part" -Force -ErrorAction SilentlyContinue
       Write-Warning "Download/extraction attempt $attempt failed: $($_.Exception.Message)"
-      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun Step 2." }
+      if ($attempt -eq 3) { throw "Bootstrap was not prepared after three attempts. Correct the network or obtain a fresh package, then rerun package preparation." }
       Read-Host "Correct the reported problem, then press Enter to retry"
     }
   }
@@ -296,7 +293,7 @@ $global:LASTEXITCODE = 0
   -ExpectedPublicKeyFingerprint $expectedFingerprint `
   -NssmPath C:\tools\nssm.exe -CaddyPath C:\tools\caddy.exe -OfferRemediation
 if ($LASTEXITCODE -ne 0) {
-  throw "Machine preflight failed. Apply every reported remediation and rerun Step 2."
+  throw "Machine preflight failed. Apply every reported remediation and rerun package preparation."
 }
 
 $global:LASTEXITCODE = 0
@@ -306,7 +303,7 @@ $global:LASTEXITCODE = 0
 if ($LASTEXITCODE -ne 0) {
   throw "Signed release verification failed. Do not continue to installation."
 }
-Write-Host "Step 2 passed. Keep this window open and continue to Step 3."
+Write-Host "Package preparation passed. Keep this window open and continue to server installation."
 ```
 
 The process-scoped execution policy applies only to this PowerShell window; it does not change the
@@ -436,7 +433,7 @@ $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-
 $global:LASTEXITCODE = 0
 & .\install-windows-server.ps1 -ManifestUri $manifestUri
 if ($LASTEXITCODE -eq 2) {
-  Write-Warning "Step 3 is degraded: the verified prior version is healthy, but the reinstall still needs attention."
+  Write-Warning "Server installation is degraded: the verified prior version is healthy, but the reinstall still needs attention."
   return
 }
 if ($LASTEXITCODE -ne 0) { throw "Installation did not complete. Use the recovery action printed above." }
@@ -568,10 +565,19 @@ The installer accepts `-RecoveryParent` for installations whose managed roots sh
 volume; the recovery directory must be separate from every managed root. Mixed-volume managed
 roots require administrator-led recovery rather than an automatic copy/delete reset.
 
-Step 3 checks old metadata before running old software. Incomplete/failed installation journals,
-corrupt JSON, blocked updaters, unresolved schema transactions, missing release/key metadata, and
-changed signing-key pins now offer a **fresh empty installation** instead of permanently blocking
-the new bootstrap. Healthy installations continue through normal maintenance. Type the displayed
+The installer classifies old metadata before considering a data reset. Ordinary failed attempts and
+incomplete local key metadata first resume with verified bootstrap scripts. A recoverable software
+failure gets at most one automatic software repair per bootstrap version until a successful install;
+the journal records that attempt so a restart cannot create an automatic retry loop.
+
+Encryption initialization reuses valid keys. If metadata is inconsistent, it first contains managed
+writers and requires positive evidence that database document/secret counts and object-file counts
+are all zero. Only then can it archive old key metadata and generate a new key. An unavailable
+database, runtime import error, or invalid preflight output is not proof of an empty store.
+
+Unresolved archive/schema transactions and changed signing-key pins offer a **fresh empty
+installation**. Genuine key loss with existing encrypted data still requires one confirmation.
+Healthy installations continue through normal maintenance. Type the displayed
 `RESET TERM SHEET DATA ...` confirmation to proceed, or press Enter to leave the old journal and
 data unchanged. Use this only when an empty replacement is intended; restoring the old installation
 still requires reconciliation by the server administrator.
