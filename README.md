@@ -1,7 +1,7 @@
 # Term Sheet server — operator guide
 
 > Verified against the current bootstrap, updater, release layout, and service installer on
-> 27 August 2026.
+> 1 September 2026.
 
 This is for the person installing and running the Term Sheet server on your own Windows machine.
 It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
@@ -55,7 +55,7 @@ computer, while `Client Files` receives one checksummed Tauri employee installer
 builds that executable before publication; server setup verifies and packages it without receiving
 source code or build credentials. Distribution to employee computers is handled separately.
 
-## Step 1: Before you start
+## Step 1: Prepare Windows
 
 Use a supported x64 Windows server, assign it a fixed LAN address, and point the intended DNS name
 at that address. Normally, two people should also be available to hold escrow certificates. If the
@@ -78,7 +78,7 @@ if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administra
 If elevation is declined, nothing is changed. Accept it later and restart Step 1; every installation
 and check below is safe to rerun.
 
-### Step 1.1: Install Node.js 24 x64
+### Install Node.js 24 x64
 
 Node.js is needed only to verify and install the first release. Installed releases use their own
 bundled, tested `runtime\node.exe`. Do not install npm packages, Git, or the source repository on the
@@ -107,9 +107,9 @@ verification commands above.
 
 If WinGet says Node.js 24 is already installed, do not uninstall it: refresh `PATH` and run the two
 checks again. If either check is still wrong, repair the existing Node.js 24 x64 installation from
-Windows Installed Apps, then rerun Step 1.1.
+Windows Installed Apps, then rerun the checks above.
 
-### Step 1.2: Install and configure PostgreSQL 18 x64
+### Install and configure PostgreSQL 18 x64
 
 PostgreSQL 18 is the supported database major and must be installed with its command-line tools.
 On Windows Server 2025 with WinGet available, launch the official EDB installer with:
@@ -158,75 +158,35 @@ database owned by another administrator. It also corrects runtime grants, the fi
 startup, loopback binding, and ownership of pre-existing application objects in the dedicated
 `public` schema. Password mistakes prompt again instead of terminating setup.
 
-### Step 1.3: Install the remaining prerequisites
-
-Obtain and extract the verified bootstrap ZIP first (the package preparation block in Step 2
-can also reuse a ZIP extracted on another computer). Run the prerequisite helper from that folder
-in elevated Windows PowerShell. Do not run machine preflight until these prerequisites are installed.
-
-```powershell
-.\install-windows-prerequisites.ps1
-```
-
-This installs the modern-Windows-compatible NSSM 2.24-101 x64 build and the release-pinned Caddy
-x64 build into `C:\tools`. Both archives are verified before any service is stopped: NSSM uses
-its published SHA-1 digest and Caddy uses its release-specific SHA-512 checksum. Both executables
-must pass a version check before replacing existing tools. Running services sharing this NSSM
-copy are briefly stopped and restarted; schedule a maintenance window if other applications use it.
-Old binaries and staging files are retained at the printed recovery path.
-
-Online requests have a 60-second timeout and at most three attempts. The verified bootstrap includes
-`prerequisites.json` with the selected stable Caddy version and its SHA-512 checksum. The server does
-not call GitHub's releases API and does not ask you to type a version. `-CaddyVersion` remains an
-optional administrator override; it is not required for normal installation.
-
-If the server has no approved GitHub access, download the following on a connected, trusted computer
-and transfer them together into a dedicated folder on an existing drive:
-
-- `nssm-2.24-101-g897c7ad.zip` from the [official NSSM download page](https://nssm.cc/download).
-- `caddy_VERSION_windows_amd64.zip` and `caddy_VERSION_checksums.txt` from the same approved
-  [official Caddy release](https://github.com/caddyserver/caddy/releases).
-
-Authenticate the checksum file through your organization's trusted download/transfer process;
-a checksum copied alongside an untrusted archive does not establish authenticity.
-
-```powershell
-$offlineDirectory = Read-Host "Enter the absolute folder containing the approved archives and checksums"
-.\install-windows-prerequisites.ps1 -OfflineDirectory $offlineDirectory
-```
-
-Offline mode selects the highest stable version with a complete archive/checksum pair, makes no
-network requests, and applies the same checksum/version checks. It never
-falls back to an unverified executable. Missing files, invalid versions and checksum mismatches
-stop before replacing tools. Correct DNS/proxy/firewall policy with the network administrator;
-do not disable TLS validation or replace the server's DNS settings blindly. This offline option
-covers NSSM/Caddy only; the later signed application-release workflow still needs its documented access.
-
-NSSM stable 2.24 is not supported: its version command exits with code 1 on modern Windows.
-The service identity and credential are collected once, immediately before installation in Step 3.
-
 ## Step 2: Prepare and verify the bootstrap package
 
 The distribution repository root intentionally contains only the update channel, signing key, and
 this guide. The PowerShell scripts are in the versioned bootstrap ZIP attached to the current server
 release. Run the following block once. If the scripts are already beside this guide, it reuses that
 extracted package. Otherwise it downloads, checksum-verifies, and extracts the package first. It
-then authenticates the signing key, checks the machine, and verifies the signed release without
-making you switch between separate command blocks.
+then unblocks the verified scripts, installs the remaining NSSM and Caddy prerequisites, authenticates
+the signing key, checks the machine, and verifies the signed release without making you switch
+directories or copy commands between sections.
+
+The normal online path downloads the pinned NSSM and Caddy archives. If this server is not allowed
+to reach `nssm.cc` or GitHub, first transfer the approved archives described under
+[Offline prerequisite files](#offline-prerequisite-files), then enter that folder when the block asks.
+Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.21/term-sheet-bootstrap-0.3.21.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.21/term-sheet-bootstrap-0.3.21.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.23/term-sheet-bootstrap-0.3.23.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.23/term-sheet-bootstrap-0.3.23.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
+$offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
 
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.21-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.21.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.23-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.23.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.21"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.23"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -255,6 +215,11 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force
 Get-ChildItem -LiteralPath $packageDirectory -Recurse -File | Unblock-File
 
 $requiredFiles = @(
+  "install-windows-prerequisites.ps1",
+  "deployment-paths.ps1",
+  "prerequisite-downloads.ps1",
+  "native-command.ps1",
+  "prerequisites.json",
   "preflight-connectivity.ps1",
   "verify-release.ps1",
   "configure-postgresql18.ps1",
@@ -287,6 +252,17 @@ if ($expectedFingerprint -ne $actualFingerprint) {
   throw "The signing-key fingerprint does not match. Stop and contact the vendor."
 }
 
+if ([string]::IsNullOrWhiteSpace($offlinePrerequisiteDirectory)) {
+  & .\install-windows-prerequisites.ps1
+} else {
+  & .\install-windows-prerequisites.ps1 -OfflineDirectory $offlinePrerequisiteDirectory
+}
+foreach ($tool in @("C:\tools\nssm.exe", "C:\tools\caddy.exe")) {
+  if (-not (Test-Path -LiteralPath $tool -PathType Leaf)) {
+    throw "Prerequisite installation did not create $tool. Apply the error printed above and rerun this Step 2 block."
+  }
+}
+
 $global:LASTEXITCODE = 0
 .\preflight-connectivity.ps1 -ManifestUri $manifestUri `
   -PublicKeyPath .\release-signing-public.pem `
@@ -310,6 +286,28 @@ The process-scoped execution policy applies only to this PowerShell window; it d
 computer or user policy. `Unblock-File` removes the downloaded-file marker from the already
 checksum-verified extracted copy. Run every remaining command from that extracted package directory
 and the same elevated PowerShell window.
+
+### Offline prerequisite files
+
+On a connected, trusted computer, download these files and transfer them together into one dedicated
+folder on an existing drive:
+
+- `nssm-2.24-101-g897c7ad.zip` from the [official NSSM download page](https://nssm.cc/download).
+- `caddy_VERSION_windows_amd64.zip` and `caddy_VERSION_checksums.txt` from the same approved
+  [official Caddy release](https://github.com/caddyserver/caddy/releases).
+
+Authenticate the Caddy checksum file through your organization's trusted download/transfer process;
+a checksum copied alongside an untrusted archive does not establish authenticity. The block selects
+the highest stable Caddy version with a complete archive/checksum pair, makes no network requests for
+these tools, and applies the same checksum and executable-version checks as online mode. Missing files,
+invalid versions, and checksum mismatches stop before replacing tools. This option covers NSSM/Caddy
+only; the signed application-release workflow still needs its documented update-channel access.
+
+The helper installs the modern-Windows-compatible NSSM 2.24-101 x64 build and release-pinned Caddy
+x64 build into `C:\tools`. Stable NSSM 2.24 is not supported because its version command exits with
+code 1 on modern Windows. Existing binaries and staging files are retained at the recovery path the
+helper prints. If other applications share `C:\tools\nssm.exe`, schedule a maintenance window because
+their services are briefly stopped and restarted while the verified tools are replaced.
 
 ### Automatic signing-key authentication
 
@@ -490,8 +488,8 @@ continues only after explicit approval. It redownloads signed application softwa
 services, tasks, the proxy and launchers while preserving the database, documents, keys,
 configuration, backups and logs.
 
-Snapshot, schema/database-state, or key-custody failures may instead offer an
-**archive-then-empty reset**. This requires typing the displayed operation-specific confirmation.
+Snapshot, schema/database-state, or key-custody failures instead trigger an automatic
+**authoritative archive-then-empty reset** after the new package verifies its signed release.
 The helper creates a redacted support bundle and recovery manifest, renames the existing PostgreSQL
 database to a timestamped `term_sheet_extractor_retired_*` name, archives the application, state and
 document-store paths, and installs a new empty database and document store. PostgreSQL 18, its Windows
@@ -575,12 +573,11 @@ writers and requires positive evidence that database document/secret counts and 
 are all zero. Only then can it archive old key metadata and generate a new key. An unavailable
 database, runtime import error, or invalid preflight output is not proof of an empty store.
 
-Unresolved archive/schema transactions and changed signing-key pins offer a **fresh empty
-installation**. Genuine key loss with existing encrypted data still requires one confirmation.
-Healthy installations continue through normal maintenance. Type the displayed
-`RESET TERM SHEET DATA ...` confirmation to proceed, or press Enter to leave the old journal and
-data unchanged. Use this only when an empty replacement is intended; restoring the old installation
-still requires reconciliation by the server administrator.
+Unresolved archive/schema transactions, changed signing-key pins, and unusable old encryption-key
+state trigger a **fresh empty installation** automatically. Healthy installations continue through
+normal maintenance. The new package is authoritative: it archives the old journal, data, key
+envelopes, and signing-key pin, then continues without requiring them or asking the operator to
+perform a separate recovery procedure.
 
 To choose this path explicitly (including broken old keys, a changed old signing-key pin, or an
 unreadable legacy journal), use the **newly extracted bootstrap package**, outside all managed roots:
@@ -598,7 +595,7 @@ never overwritten or deleted. If the live database was already retired, fresh in
 without renaming it again. Any live application database that remains is retired separately.
 
 The new installation uses the new package's signing-key pin and generates new local encryption
-keys; old keys and settings are not required or reused. **New keys cannot decrypt old documents,
+keys; old keys and settings neither constrain the installation nor get reused. **New keys cannot decrypt old documents,
 backups, or secrets.** Keep every old recovery directory and key envelope for possible recovery;
 reconfigure provider API keys and staff settings in the new application. Release/archive validation,
 new key custody, filesystem safety, exclusive installation, and final health checks still apply.
