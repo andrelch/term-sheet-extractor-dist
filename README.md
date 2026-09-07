@@ -174,8 +174,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.24/term-sheet-bootstrap-0.3.24.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.24/term-sheet-bootstrap-0.3.24.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.25/term-sheet-bootstrap-0.3.25.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.25/term-sheet-bootstrap-0.3.25.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +183,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.24-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.24.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.25-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.25.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.24"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.25"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -306,8 +306,12 @@ only; the signed application-release workflow still needs its documented update-
 The helper installs the modern-Windows-compatible NSSM 2.24-101 x64 build and release-pinned Caddy
 x64 build into `C:\tools`. Stable NSSM 2.24 is not supported because its version command exits with
 code 1 on modern Windows. Existing binaries and staging files are retained at the recovery path the
-helper prints. If other applications share `C:\tools\nssm.exe`, schedule a maintenance window because
-their services are briefly stopped and restarted while the verified tools are replaced.
+helper prints. If other applications share `C:\tools\nssm.exe` or `C:\tools\caddy.exe`, schedule a
+maintenance window. The helper briefly stops and restarts services that use the managed NSSM binary;
+if they do not stop promptly, it forcibly terminates their process trees. It uses Windows Restart
+Manager plus executable-path inspection to find and forcibly terminate other processes holding either
+managed file, including standalone processes; those standalone processes are not restarted. Replacement
+and recovery copies are retried to cover processes that start during installation.
 
 ### Automatic signing-key authentication
 
