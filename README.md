@@ -174,8 +174,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.27/term-sheet-bootstrap-0.3.27.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.27/term-sheet-bootstrap-0.3.27.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.28/term-sheet-bootstrap-0.3.28.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.28/term-sheet-bootstrap-0.3.28.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +183,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.27-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.27.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.28-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.28.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.27"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.28"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -563,6 +563,34 @@ Failures report the exact stage and paths. A missing tool, inaccessible drive, o
 unsupported cross-volume archive is rejected before database retirement. Directory archives use
 same-volume renames without traversing release junctions; archived release-link targets are recorded
 in the manifest and the links detached, so they cannot point back into a new live installation.
+Current bootstrap packages also reconcile the managed-root owner and ACL for SYSTEM and local
+Administrators before archiving. All application, data, and state renames and recovery ACL changes
+finish before the live database is retired. If database verification or retirement then fails, Step 3
+restores the completed filesystem renames in reverse order and restores the previously running
+services/tasks. A permission or locked-path failure therefore leaves the live database unchanged.
+
+If interruption leaves either the journal or recovery manifest marked `running`, rerun Step 3 from
+the current verified bootstrap package and keep the original recovery directory. Step 3 derives the
+next action from the operation IDs, every archive source and destination, the live database, and the
+recorded retired database. It can finish an interrupted file rename, database retirement, release-link
+detachment, or manifest/journal commit without retiring the database twice. Both-present,
+both-missing, mismatched, or duplicated evidence remains a manual stop.
+
+Before archiving, Step 3 budgets the bounded diagnostic bundle plus recovery metadata and creates a
+4 MiB completion reservation. Pre-migration snapshots separately require 125% of PostgreSQL's
+reported database size plus 256 MiB and the same completion reserve. The reserve is released for the
+final atomic manifest write. `TSE-READY-012` capacity failures report the required and available bytes
+without changing the database.
+
+The application service account has read-and-execute access to `ApplicationRoot`; only SYSTEM and
+local Administrators can modify releases, staging directories, or release junctions. The account
+retains Modify access to the state and data roots. Health checks compare ACL identities by SID, so
+localized Windows account names do not affect the SYSTEM check.
+
+When a managed rename remains locked, Windows Restart Manager records the blocking process IDs,
+image paths, service names, and immediate descendants in the recovery manifest and prints them to
+the console. Step 3 does not terminate unknown third-party processes; close or exclude the reported
+software and rerun the same verified package.
 The installer accepts `-RecoveryParent` for installations whose managed roots share a different
 volume; the recovery directory must be separate from every managed root. Mixed-volume managed
 roots require administrator-led recovery rather than an automatic copy/delete reset.
