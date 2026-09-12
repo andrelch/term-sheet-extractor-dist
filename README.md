@@ -174,8 +174,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.28/term-sheet-bootstrap-0.3.28.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.28/term-sheet-bootstrap-0.3.28.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.29/term-sheet-bootstrap-0.3.29.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.29/term-sheet-bootstrap-0.3.29.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +183,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.28-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.28.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.29-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.29.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.28"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.29"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -636,6 +636,36 @@ still required. Nothing marks an unresolved old reset as successfully recovered.
 
 A failed preflight with evidence that neither database retirement nor file movement began can also
 be retried normally after correcting its cause. Never delete the journal to force another reset.
+
+### Completely remove and reinstall a corrupted server
+
+If archive recovery cannot rename a corrupted or locked managed directory, the installer offers a
+separate **destructive clean install**. This is not the recovery-preserving `-FreshInstall` path: it
+permanently deletes the application, state, document store, backups, configuration, encryption keys,
+all recovery directories, the live `term_sheet_extractor` database, every managed
+`term_sheet_extractor_retired_*` database, and the `term_sheet_extractor_admin` and `term_sheet_app`
+roles. None of that data can be recovered afterward. PostgreSQL 18 itself, its Windows service, the
+`postgres` account, unrelated databases, and external escrow/custody media are not removed.
+
+Use a newly extracted, verified bootstrap package outside every managed root:
+
+```powershell
+.\install-windows-server.ps1 -ManifestUri $manifestUri -CleanInstall
+```
+
+The signed release is verified before cleanup. Setup then prints the exact deletion targets and
+requires the case-sensitive phrase `DELETE ALL TERM SHEET DATA`; supplying `-CleanInstall` does not
+bypass that confirmation. The same choice is offered after an eligible archive rename/permission
+failure, including a rerun of an incomplete reset whose database was already retired.
+
+Cleanup unregisters the two Term Sheet tasks, removes the four Term Sheet services, and may forcibly
+terminate only processes proven to belong to those services or to execute beneath a managed Term
+Sheet root. It never terminates PostgreSQL or an unrelated blocker. If Windows still refuses a
+deletion, setup stops with exact diagnostics and the cleanup can be rerun after correcting the host
+condition. A restricted, non-secret audit survives under
+`%ProgramData%\WinnerZone\TermSheet-Installer\clean-install`; it records consent, exact targets,
+completed deletions, and the final installation health result so an interrupted cleanup resumes
+idempotently without trusting the deleted state directory.
 
 ## Automatic installation confirmation
 
