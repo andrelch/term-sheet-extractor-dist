@@ -174,8 +174,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.29/term-sheet-bootstrap-0.3.29.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.29/term-sheet-bootstrap-0.3.29.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.30/term-sheet-bootstrap-0.3.30.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.30/term-sheet-bootstrap-0.3.30.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +183,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.29-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.29.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.30-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.30.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.29"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.30"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -563,8 +563,11 @@ Failures report the exact stage and paths. A missing tool, inaccessible drive, o
 unsupported cross-volume archive is rejected before database retirement. Directory archives use
 same-volume renames without traversing release junctions; archived release-link targets are recorded
 in the manifest and the links detached, so they cannot point back into a new live installation.
-Current bootstrap packages also reconcile the managed-root owner and ACL for SYSTEM and local
-Administrators before archiving. All application, data, and state renames and recovery ACL changes
+Current bootstrap packages also recursively reclaim stale child ACLs and reconcile the managed-root
+owner and ACL for SYSTEM and local Administrators before destructive cleanup. Reparse-point targets
+are never followed. The fresh release and employee handoff are prepared under this temporary
+maintenance authority; the service account's read-only release policy is restored before services
+start. All application, data, and state renames and recovery ACL changes
 finish before the live database is retired. If database verification or retirement then fails, Step 3
 restores the completed filesystem renames in reverse order and restores the previously running
 services/tasks. A permission or locked-path failure therefore leaves the live database unchanged.
