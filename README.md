@@ -174,8 +174,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.31/term-sheet-bootstrap-0.3.31.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.31/term-sheet-bootstrap-0.3.31.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.32/term-sheet-bootstrap-0.3.32.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.32/term-sheet-bootstrap-0.3.32.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +183,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.31-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.31.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.32-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.32.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.31"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.32"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -658,10 +658,16 @@ Use a newly extracted, verified bootstrap package outside every managed root:
 .\install-windows-server.ps1 -ManifestUri $manifestUri -CleanInstall
 ```
 
-The signed release is verified before cleanup. Setup then prints the exact deletion targets and
-requires the case-sensitive phrase `DELETE ALL TERM SHEET DATA`; supplying `-CleanInstall` does not
-bypass that confirmation. The same choice is offered after an eligible archive rename/permission
-failure, including a rerun of an incomplete reset whose database was already retired.
+The opening setup menu offers **Standard install or repair** (the Enter-key default) and **Clean
+install**. The signed release is verified before cleanup. Setup then prints the exact deletion
+targets and requires a separate `Y` confirmation; selecting Clean install or supplying
+`-CleanInstall` does not bypass that confirmation. The same confirmation is offered after an
+eligible archive rename/permission failure, including the operation-bound collision where both an
+archive source and its recorded destination exist after the database was already retired.
+
+After confirmation, old application files, documents, configuration, keys, journals and recovery
+copies are deleted rather than reconciled, imported, or reused. Setup creates new application roles,
+an empty database, new configuration and encryption keys, then installs and verifies the new server.
 
 Cleanup unregisters the two Term Sheet tasks, removes the four Term Sheet services, and may forcibly
 terminate only processes proven to belong to those services or to execute beneath a managed Term
