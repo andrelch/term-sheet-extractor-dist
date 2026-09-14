@@ -174,8 +174,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.30/term-sheet-bootstrap-0.3.30.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.30/term-sheet-bootstrap-0.3.30.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.31/term-sheet-bootstrap-0.3.31.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.31/term-sheet-bootstrap-0.3.31.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +183,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.30-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.30.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.31-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.31.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.30"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.31"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -454,7 +454,7 @@ What each required flag is:
 | `-PgBin` | Optional PostgreSQL 18 command-line-tools directory. Defaults to `C:\Program Files\PostgreSQL\18\bin`; use this when IT installed the approved tools elsewhere. Bootstrap records the absolute `pg_dump` and `pg_restore` paths for services and the SYSTEM updater task. |
 | `-PublicHostname` | Defaults to `termsheetextractor.local`. Step 3 puts the current LAN address in the employee installer; setup replaces older mappings for that hostname on each employee computer automatically. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
-| `-ServiceUser` | The Windows account the application services run as. The block defaults to the signed-in account; an approved dedicated low-privilege service identity may be substituted. |
+| `-ServiceUser` | The Windows account the application services run as. The block defaults to the signed-in account; an approved dedicated low-privilege service identity may be substituted. Setup grants only the required **Log on as a service** right and validates the supplied password with a service-type logon before changing application state. |
 | `-EscrowDirectory`, `-EscrowCertificatePath` | Where sealed, encrypted backups of the document-encryption master key are written, and the public certificates of two separate recovery holders. Each certificate produces an independently recoverable package. |
 | `-AllowDeferredEscrow` | Explicitly installs without recovery packages when custodians do not yet exist. It cannot be combined with either escrow argument and must be treated as a temporary, approved data-loss risk. |
 | `-ManifestUri` | The vendor's update-channel URL. Fixed — it's the same URL for every future update too. |
@@ -588,7 +588,9 @@ without changing the database.
 The application service account has read-and-execute access to `ApplicationRoot`; only SYSTEM and
 local Administrators can modify releases, staging directories, or release junctions. The account
 retains Modify access to the state and data roots. Health checks compare ACL identities by SID, so
-localized Windows account names do not affect the SYSTEM check.
+localized Windows account names do not affect the SYSTEM check. A domain policy that explicitly
+denies service logon still wins; setup reports that policy conflict separately from an incorrect
+password before attempting to start NSSM.
 
 When a managed rename remains locked, Windows Restart Manager records the blocking process IDs,
 image paths, service names, and immediate descendants in the recovery manifest and prints them to
