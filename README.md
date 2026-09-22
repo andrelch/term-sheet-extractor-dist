@@ -63,8 +63,10 @@ organization has not appointed them yet, Step 3 asks whether to install with or 
 provides an explicit temporary deferred-escrow
 procedure.
 
-Open **Windows PowerShell as Administrator**. All commands in this step run in that elevated window.
-Confirm it is elevated before installing anything:
+Open Windows PowerShell with an account that belongs to local **Administrators**. The server
+installer automatically opens its own elevated PowerShell through the Windows UAC prompt and
+securely carries the selected options into that process. Accept that prompt when it appears. For
+the prerequisite commands in this step, confirm the current window is elevated:
 
 ```powershell
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
@@ -174,8 +176,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.32/term-sheet-bootstrap-0.3.32.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.32/term-sheet-bootstrap-0.3.32.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.33/term-sheet-bootstrap-0.3.33.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.33/term-sheet-bootstrap-0.3.33.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -183,10 +185,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.32-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.32.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.33-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.33.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.32"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.33"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -503,6 +505,13 @@ concurrency, and unverifiable-bootstrap failures never offer this reset; a reset
 untrusted package safe. Do not delete `C:\TermSheet`, the data directory, or
 `%ProgramData%\WinnerZone\TermSheet` manually.
 
+Before stopping any service or moving a recoverable path, archive reset confirms that PostgreSQL 18
+is ready, retries a mistyped administrator password, and proves that the authenticated `postgres`
+account has the cluster authority needed to retire the database. It inventories and controls the
+managed services and scheduled tasks with checked administrator operations; an access-denied result
+cannot be mistaken for a missing or stopped resource. Software-reinstall baselines are captured
+under the updater's exclusive lock so a scheduled update cannot change them mid-copy.
+
 An interrupted snapshot uses an operation-bound directory under
 `%ProgramData%\WinnerZone\TermSheet\pre-migration-snapshots`. Incomplete data is removed only when
 its marker matches the interrupted operation; a completed, verified snapshot is preserved. After
@@ -677,6 +686,13 @@ condition. A restricted, non-secret audit survives under
 `%ProgramData%\WinnerZone\TermSheet-Installer\clean-install`; it records consent, exact targets,
 completed deletions, and the final installation health result so an interrupted cleanup resumes
 idempotently without trusting the deleted state directory.
+
+Before deletion, cleanup verifies that the authenticated `postgres` account has PostgreSQL
+superuser authority and recursively grants local Administrators and SYSTEM control over every
+validated managed directory. PostgreSQL records database ownership as a cluster-wide dependency;
+setup recognizes ownership and grants for the live and retired Term Sheet databases as managed and
+removes them normally. A dependency in a genuinely unrelated database or shared PostgreSQL object
+is still left untouched and reported with its exact database or catalog identity.
 
 ## Automatic installation confirmation
 
