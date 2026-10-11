@@ -1,7 +1,25 @@
 # Term Sheet server — operator guide
 
+## Current software behavior
+
+Apply the verified release's full migration set before starting updated services. The working tree
+adds `20260929010000_resumable_ocr`; OCR progress is saved in five-page batches and may span several
+queue claims. A continuing job is not a terminal failure. Inspect processing details and worker
+health before requesting Retry; successful saved pages can be reused.
+
+After deployment, regenerate exports using the 83-column layout. Recording a call/maturity/settlement
+does not require reapproving unchanged investment terms. Confirm redemption-notice matches in the
+UI, and inspect duplicate exclusions before distributing a workbook. See
+[redemption/report retests](redemption-report-regression.md) and
+[database/export recovery](installation-and-export-recovery.md).
+
+Keep workspace saves sequential across users and requests. Avoid physical document deletion during
+backups; restore drills must confirm referenced originals, not only copied-file hashes. The
+[current defect review](extraction-database-export-review.md) identifies unresolved failed-rerun,
+position-identity and concurrency risks; installation success does not resolve them.
+
 > Verified against the current bootstrap, updater, release layout, and service installer on
-> 1 September 2026.
+> 11 October 2026.
 
 This is for the person installing and running the Term Sheet server on your own Windows machine.
 It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
@@ -176,8 +194,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.33/term-sheet-bootstrap-0.3.33.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.33/term-sheet-bootstrap-0.3.33.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.35/term-sheet-bootstrap-0.3.35.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.35/term-sheet-bootstrap-0.3.35.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -185,10 +203,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.33-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.33.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.35-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.35.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.33"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.35"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
