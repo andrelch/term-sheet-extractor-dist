@@ -1,17 +1,17 @@
 {
   "schemaVersion": 1,
   "channel": "production",
-  "version": "0.3.36",
-  "release": "ff6d97b9ebee19b381e80ce83c05537f312eca54",
-  "builtAt": "2026-10-12T08:47:14.886Z",
+  "version": "0.3.37",
+  "release": "3493d9042156bdf1fc291aeddd61832e6709ddeb",
+  "builtAt": "2026-10-13T07:33:42.014Z",
   "minimumUpdaterVersion": "1.0.0",
   "databaseCompatibility": 1,
   "rollbackSafe": true,
   "artifact": {
-    "url": "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.36/term-sheet-server-0.3.36.tar.gz",
-    "sha256": "7a104dab1e54b66eb6cd3f0078b16e397ff212c1ffc584322264afd37de7369e",
-    "size": 475658815
+    "url": "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.37/term-sheet-server-0.3.37.tar.gz",
+    "sha256": "5dacda1f18b354a184fd769bbbb9affa682b2612df429d94a0d96810f987f429",
+    "size": 475668778
   },
   "signatureAlgorithm": "RSA-SHA256",
-  "signature": "Yn/z+49WQDzTzVWSyOa50pJcYwD+vhhkUuogWX2SIXyNjQFdl1HLkr+4uB/aZnahpCoU4msnSKUrb7NFsEnyw5P/MWD4tyHWTu6P76cAn81yUubHm8QHk8cRLLFICbULB4ocEfgHTUQE15L/vBmoeS+SbKSEWu/DTV1XdQGO35itJvc2DlUC2CQnvWFLwDpPR28QnvSPq6fGRn7dMHVIvOKZjvBkcbhpFX755f0s3wDjSVQYn3FsmAr9peD+YUcbQkeEE4HrpRxyvdKgORaYH6EbT2kSa+1TNCIabtSZuskX1Q/ywxYCiB+6VWeupcGSc0VJ0t1snXOEivZ9BDORXlg1jwtQOGkeqsUvQjAv4Wobtx2tuDFrBPp1EcBDqBuNGM2f9P43SuHg29TRwSbtrh9i3hkVYvU+9kSTaKLvgqsc0wBvvL3nVxdrAwXVTat0LbjE8Iab5zeYjvDSnEzJUGhEI9Q0ffIUNr0ui1k3a6bCEcvtNoHsE26AgyhlrOh4"
+  "signature": "Rdn+XrSCp0fkOFwuW58Dg41kxgV3Mlxd2T8PA5pYn3/wKhkp98hGUe01IvDLaJanHO6K2LxN2UmWcYoRAtQ4szHuLXsujU6hux/UVIeLeq3x4iy6umlIMNvqKBths9epVOHSD8qyW+VIG0ECzSwB6Slf/zggNCiKm1N5d9igq5/HYNoHqNBAffgCBH0UoezctIvsKjDP5Mr7fgudl/EgxEFtAZWvfJK8IbzEKjfAl92YmY99ptw6b7xh6wkDTKlJF6RhDywT9I38LfdeycPRckbub4+9FJTgm15FROYf5Jr4SUW+v7gB1bb6UxksCYoNSRJG3Bc8iA1RFN9uTVjYdnXgM7GWEFYqHAhPq3L6a/LnJKzKelNCT5J36PqJDUiV5Qmgc7G6u08LmISw2FGDxP9Ag5o2V1xjYpN9O/wWxKzTE/CN6PjneTwghWteqNomJM2RShbgarFOzPjDXKPjBaDoK9ozgsog8tUH0GTLSVXCRLO82TxgSzErNx/6Bz4S"
 }
