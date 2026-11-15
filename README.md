@@ -1,32 +1,20 @@
 # Term Sheet server — operator guide
 
-## Current software behavior
+Source baseline: **0.3.43 release candidate, prepared 15 November 2026**.
+This is the primary interactive Windows
+installation/recovery guide. Use [operations](operations.md) for day-two storage, keys, backup and
+incidents, and [releases](releases-and-updates.md) for artifact compatibility and qualification.
 
-Apply the verified release's full migration set before starting updated services. The working tree
-adds `20260929010000_resumable_ocr`; OCR progress is saved in five-page batches and may span several
-queue claims. A continuing job is not a terminal failure. Inspect processing details and worker
-health before requesting Retry; successful saved pages can be reused.
+Install the verified release's complete migrations before starting matching services. Existing local
+workspaces also require the bundled upgrade path; first-run schema creation alone is insufficient.
+OCR continuations preserve successful page work. For version 0.3.43, verify the field-history and
+pipeline-version migrations and current Paddle worker/runtime in the artifact; consult the
+[release notes](releases-and-updates.md#release-0343). Position identity, failed-rerun restoration,
+workspace locking and built-in backup/deletion coordination are implemented; see
+[limitations](known-limitations.md) and [current retests](regression-checklist.md).
 
-After deployment, regenerate exports using the 83-column layout. Recording a call/maturity/settlement
-does not require reapproving unchanged investment terms. Confirm redemption-notice matches in the
-UI, and inspect duplicate exclusions before distributing a workbook. See
-[redemption/report retests](redemption-report-regression.md) and
-[database/export recovery](installation-and-export-recovery.md).
-
-Keep workspace saves sequential across users and requests. Avoid physical document deletion during
-backups; restore drills must confirm referenced originals, not only copied-file hashes. The
-[current defect review](extraction-database-export-review.md) identifies unresolved failed-rerun,
-position-identity and concurrency risks; installation success does not resolve them.
-
-> Verified against the current bootstrap, updater, release layout, and service installer on
-> 11 October 2026.
-
-This is for the person installing and running the Term Sheet server on your own Windows machine.
-It covers installation, day-to-day operation, and what to do when something goes wrong. It does not
-assume access to the vendor's source code or internal engineering documentation — you shouldn't need
-either.
-
-If anything here doesn't match what you're seeing, stop and contact the vendor rather than guessing.
+This guide does not require vendor source access. If installed scripts/options differ, identify the
+actual installed artifact and use its verified maintenance package before attempting repair.
 
 ## What setup handles automatically
 
@@ -64,8 +52,9 @@ terminates HTTPS, and a small updater that checks for new versions on a timer an
 automatically. Everything the server ever runs is cryptographically signed by the vendor; the server
 verifies that signature before installing anything, every time, including its own future updates.
 
-Your database, documents, and configuration live outside the installed application entirely, so an
-update — or a rollback from a bad one — never touches them.
+Your database, documents and configuration live outside release directories, so replacing an
+artifact does not remove them. Update-time migrations can change the database. Rollback requires
+compatible schema metadata; an incompatible migration requires guided recovery from the snapshot.
 
 Setup also creates the mandatory launcher handoff. A browser shortcut is added on the server
 computer, while `Client Files` receives one checksummed Tauri employee installer containing both
@@ -194,8 +183,8 @@ to reach `nssm.cc` or GitHub, first transfer the approved archives described und
 Press Enter to use the normal online path.
 
 ```powershell
-$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.42/term-sheet-bootstrap-0.3.42.zip"
-$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.42/term-sheet-bootstrap-0.3.42.zip.sha256"
+$bootstrapUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.43/term-sheet-bootstrap-0.3.43.zip"
+$bootstrapChecksumUrl = "https://github.com/andrelch/term-sheet-extractor-dist/releases/download/server-v0.3.43/term-sheet-bootstrap-0.3.43.zip.sha256"
 $manifestUri = "https://raw.githubusercontent.com/andrelch/term-sheet-extractor-dist/main/production.json"
 $publishedFingerprint = "54ce5bf97695f05fa2223e6e8320d4b91445513e7210028863136e8faa833217".ToLowerInvariant()
 $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Enter to download them now)"
@@ -203,10 +192,10 @@ $offlinePrerequisiteDirectory = Read-Host "Offline NSSM/Caddy folder (press Ente
 if (Test-Path -LiteralPath (Join-Path $PWD "preflight-connectivity.ps1") -PathType Leaf) {
   $packageDirectory = $PWD.Path
 } else {
-  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.42-download"
-  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.42.zip"
+  $downloadRoot = Join-Path $PWD "term-sheet-bootstrap-0.3.43-download"
+  $bootstrapZip = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.43.zip"
   $bootstrapChecksum = "$bootstrapZip.sha256"
-  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.42"
+  $packageDirectory = Join-Path $downloadRoot "term-sheet-bootstrap-0.3.43"
   New-Item -ItemType Directory -Path $downloadRoot -Force | Out-Null
   for ($attempt = 1; $attempt -le 3; $attempt++) {
     try {
@@ -470,7 +459,7 @@ What each required flag is:
 | Flag | What it is |
 | --- | --- |
 | `-ApplicationRoot` | Where releases are installed. Not where your data lives. |
-| `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-before-you-start). |
+| `-NssmPath`, `-CaddyPath` | Paths to the tools you installed in [Step 1](#step-1-prepare-windows). |
 | `-PgBin` | Optional PostgreSQL 18 command-line-tools directory. Defaults to `C:\Program Files\PostgreSQL\18\bin`; use this when IT installed the approved tools elsewhere. Bootstrap records the absolute `pg_dump` and `pg_restore` paths for services and the SYSTEM updater task. |
 | `-PublicHostname` | Defaults to `termsheetextractor.local`. Step 3 puts the current LAN address in the employee installer; setup replaces older mappings for that hostname on each employee computer automatically. Pass `localhost` explicitly for a server-only installation. Caddy also keeps `https://localhost/` available for the server-console launcher. |
 | `-ClientFilesRoot` | Optional output directory for the verified combined employee installer and its handoff files. Defaults to `C:\TermSheet\Client Files`. |
